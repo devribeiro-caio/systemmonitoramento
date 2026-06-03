@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Formis Monitoramento</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="./assets/formis-logo.png" alt="Formis Instrumentos de Medição">
+        <span>Atendimento</span>
+      </div>
+
+      <nav class="nav-list" aria-label="Navegação principal">
+        <button class="nav-item active" data-view="dashboard" type="button" title="Dashboard">
+          <span class="icon" aria-hidden="true">▦</span>
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="attendances" type="button" title="Atendimentos">
+          <span class="icon" aria-hidden="true">☎</span>
+          <span>Atendimentos</span>
+        </button>
+        <button class="nav-item" data-view="team" type="button" title="Equipe">
+          <span class="icon" aria-hidden="true">◉</span>
+          <span>Equipe</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <span id="connectionStatus">Aguardando login</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Sistema de monitoramento</p>
+          <h1>Central de atendimentos Formis</h1>
+        </div>
+        <div class="user-chip">
+          <span id="userInitials">FM</span>
+          <div>
+            <strong id="userName">Visitante</strong>
+            <small id="userRole">Não autenticado</small>
+          </div>
+          <button class="icon-btn hidden" id="logoutBtn" type="button" title="Sair">×</button>
+        </div>
+      </header>
+
+      <!-- Tela de Login -->
+      <section class="login-panel" id="authPanel">
+        <div class="auth-copy">
+          <img src="./assets/formis-logo.png" alt="Formis Instrumentos de Medição">
+          <h2>Entrar no monitoramento</h2>
+          <p>Use o telefone raiz para acompanhar os atendimentos da equipe, registrar contatos e visualizar indicadores.</p>
+        </div>
+
+        <div class="auth-forms-wrapper">
+          <!-- Abas -->
+          <div class="auth-tabs">
+            <button class="auth-tab active" id="tabLogin" type="button">Entrar</button>
+            <button class="auth-tab" id="tabRegister" type="button">Cadastrar-se</button>
+          </div>
+
+          <!-- Formulário de Login -->
+          <form id="loginForm" class="form-grid auth-form-panel active">
+            <label>
+              E-mail
+              <input id="loginEmail" type="email" placeholder="colaborador@formis.com.br" required>
+            </label>
+            <label>
+              Senha
+              <input id="loginPassword" type="password" placeholder="mínimo 6 caracteres" required>
+            </label>
+            <button class="primary-btn" type="submit">Entrar</button>
+            <p class="form-message" id="authMessage"></p>
+          </form>
+
+          <!-- Formulário de Cadastro -->
+          <form id="registerForm" class="form-grid auth-form-panel">
+            <label>
+              Nome completo
+              <input id="regName" type="text" placeholder="Seu nome" required>
+            </label>
+            <label>
+              E-mail
+              <input id="regEmail" type="email" placeholder="colaborador@formis.com.br" required>
+            </label>
+            <label>
+              Senha
+              <input id="regPassword" type="password" placeholder="mínimo 6 caracteres" required>
+            </label>
+            <label>
+              Telefone
+              <input id="regPhone" type="tel" placeholder="(11) 4441-8838">
+            </label>
+            <label>
+              Ramal
+              <input id="regExtension" type="text" placeholder="203">
+            </label>
+            <label>
+              Telefone raiz
+              <input id="regRootPhone" type="tel" placeholder="(11) 94509-2300" required>
+            </label>
+            <button class="primary-btn" type="submit">Cadastrar</button>
+            <p class="form-message" id="registerMessage"></p>
+          </form>
+        </div>
+      </section>
+
+      <!-- Dashboard -->
+      <section class="content-grid hidden" id="appContent">
+        <div class="metrics">
+          <article class="metric-card">
+            <small>Total</small>
+            <strong id="metricTotal">0</strong>
+            <span>atendimentos registrados</span>
+          </article>
+          <article class="metric-card">
+            <small>Em andamento</small>
+            <strong id="metricProgress">0</strong>
+            <span>contatos ativos</span>
+          </article>
+          <article class="metric-card">
+            <small>Resolvidos</small>
+            <strong id="metricResolved">0</strong>
+            <span>finalizados pela equipe</span>
+          </article>
+          <article class="metric-card accent">
+            <small>Telefone raiz</small>
+            <strong id="metricRoot">--</strong>
+            <span>base monitorada</span>
+          </article>
+        </div>
+
+        <section class="workspace">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Novo registro</p>
+                <h2>Atendimento</h2>
+              </div>
+              <button class="icon-btn" id="refreshBtn" type="button" title="Atualizar">↻</button>
+            </div>
+            <form id="attendanceForm" class="form-grid compact">
+              <label>
+                Nome do cliente
+                <input id="customerName" type="text" placeholder="Cliente ou empresa">
+              </label>
+              <label>
+                Telefone do cliente
+                <input id="customerPhone" type="tel" placeholder="(11) 99999-9999" required>
+              </label>
+              <label>
+                Canal
+                <select id="channel">
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="phone">Telefone</option>
+                  <option value="chat">Chat</option>
+                  <option value="email">E-mail</option>
+                  <option value="other">Outro</option>
+                </select>
+              </label>
+              <label>
+                Status
+                <select id="status">
+                  <option value="open">Aberto</option>
+                  <option value="in_progress">Em andamento</option>
+                  <option value="resolved">Resolvido</option>
+                  <option value="lost">Perdido</option>
+                </select>
+              </label>
+              <label class="wide">
+                Observações
+                <textarea id="notes" rows="4" placeholder="Resumo objetivo do atendimento"></textarea>
+              </label>
+              <button class="primary-btn" type="submit">Registrar</button>
+            </form>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Monitoramento</p>
+                <h2>Últimos atendimentos</h2>
+              </div>
+              <select id="statusFilter" title="Filtrar status">
+                <option value="">Todos</option>
+                <option value="open">Abertos</option>
+                <option value="in_progress">Em andamento</option>
+                <option value="resolved">Resolvidos</option>
+                <option value="lost">Perdidos</option>
+              </select>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Canal</th>
+                    <th>Status</th>
+                    <th>Colaborador</th>
+                    <th>Início</th>
+                  </tr>
+                </thead>
+                <tbody id="attendanceRows">
+                  <tr>
+                    <td colspan="5" class="empty-state">Faça login para carregar os atendimentos.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace team-space" id="teamSection">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Gestão</p>
+                <h2>Novo colaborador</h2>
+              </div>
+            </div>
+            <form id="userForm" class="form-grid compact">
+              <label>
+                Nome
+                <input id="newUserName" type="text" placeholder="Nome do colaborador" required>
+              </label>
+              <label>
+                E-mail
+                <input id="newUserEmail" type="email" placeholder="colaborador@formis.com.br" required>
+              </label>
+              <label>
+                Senha
+                <input id="newUserPassword" type="password" placeholder="mínimo 6 caracteres" required>
+              </label>
+              <label>
+                Perfil
+                <select id="newUserRole">
+                  <option value="collaborator">Colaborador</option>
+                  <option value="supervisor">Supervisor</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <label>
+                Telefone
+                <input id="newUserPhone" type="tel" placeholder="(11) 4441-8838">
+              </label>
+              <label>
+                Ramal
+                <input id="newUserExtension" type="text" placeholder="203">
+              </label>
+              <label>
+                Telefone raiz
+                <input id="newUserRootPhone" type="tel" placeholder="(11) 94509-2300">
+              </label>
+              <button class="primary-btn" type="submit">Adicionar</button>
+              <p class="form-message" id="userMessage"></p>
+            </form>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Equipe</p>
+                <h2>Colaboradores monitorados</h2>
+              </div>
+            </div>
+            <div class="team-list" id="teamList">
+              <p class="empty-state">Faça login para carregar a equipe.</p>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
