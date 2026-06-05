@@ -27,7 +27,9 @@
           <span class="icon" aria-hidden="true">💬</span>
           <span>Chat</span>
         </button>
-        <button class="nav-item" data-view="team" type="button" title="Equipe">
+        
+        <!-- Equipe: só aparece para admin/supervisor via JS -->
+        <button class="nav-item admin-only hidden" data-view="team" type="button" title="Equipe">
           <span class="icon" aria-hidden="true">◉</span>
           <span>Equipe</span>
         </button>
@@ -59,44 +61,28 @@
         </div>
       </header>
 
-      <!-- Tela de Login -->
+      <!-- Tela de Login (sem aba de cadastro) -->
       <section class="login-panel" id="authPanel">
         <div class="auth-copy">
           <img src="./assets/formis-logo.png" alt="Formis Instrumentos de Medição">
           <h2>Entrar no monitoramento</h2>
-          <p>Use o telefone raiz para acompanhar os atendimentos da equipe, registrar contatos e visualizar indicadores.</p>
+          <p>Use suas credenciais para acessar o sistema de atendimento Formis.</p>
         </div>
 
         <div class="auth-forms-wrapper">
-          <div class="auth-tabs">
-            <button class="auth-tab active" id="tabLogin" type="button">Entrar</button>
-            <button class="auth-tab" id="tabRegister" type="button">Cadastrar-se</button>
-          </div>
-
-          <form id="loginForm" class="form-grid auth-form-panel active">
+          <form id="loginForm" class="form-grid">
             <label>E-mail <input id="loginEmail" type="email" placeholder="colaborador@formis.com.br" required></label>
             <label>Senha <input id="loginPassword" type="password" placeholder="mínimo 6 caracteres" required></label>
             <button class="primary-btn" type="submit">Entrar</button>
             <p class="form-message" id="authMessage"></p>
-          </form>
-
-          <form id="registerForm" class="form-grid auth-form-panel">
-            <label>Nome completo <input id="regName" type="text" placeholder="Seu nome" required></label>
-            <label>E-mail <input id="regEmail" type="email" placeholder="colaborador@formis.com.br" required></label>
-            <label>Senha <input id="regPassword" type="password" placeholder="mínimo 6 caracteres" required></label>
-            <label>Telefone <input id="regPhone" type="tel" placeholder="(11) 4441-8838"></label>
-            <label>Ramal <input id="regExtension" type="text" placeholder="203"></label>
-            <label>Telefone raiz <input id="regRootPhone" type="tel" placeholder="(11) 94509-2300" required></label>
-            <button class="primary-btn" type="submit">Cadastrar</button>
-            <p class="form-message" id="registerMessage"></p>
           </form>
         </div>
       </section>
 
       <!-- Conteúdo Principal -->
       <section class="content-grid hidden" id="appContent">
-        
-        <!-- Métricas (Aparecem no Dashboard e Atendimentos) -->
+
+        <!-- Métricas -->
         <div class="metrics" id="metricsRow">
           <article class="metric-card">
             <small>Total</small>
@@ -120,7 +106,7 @@
           </article>
         </div>
 
-        <!-- Seção: Dashboard -->
+        <!-- Dashboard -->
         <section class="view-section" id="view-dashboard">
           <div class="workspace">
             <div class="panel">
@@ -174,25 +160,23 @@
           </div>
         </section>
 
-        <!-- Seção: Atendimentos (Apenas Tabela) -->
+        <!-- Atendimentos -->
         <section class="view-section hidden" id="view-attendances">
-           <div class="panel">
-              <div class="panel-header">
-                <div><p class="eyebrow">Monitoramento Completo</p><h2>Todos os Atendimentos</h2></div>
-              </div>
-              <div class="table-wrap" id="fullTableContainer">
-                <!-- Tabela será movida para cá ou duplicada via script -->
-              </div>
-           </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div><p class="eyebrow">Monitoramento Completo</p><h2>Todos os Atendimentos</h2></div>
+            </div>
+            <div class="table-wrap" id="fullTableContainer"></div>
+          </div>
         </section>
 
-        <!-- Seção: Equipe -->
+        <!-- Equipe (admin/supervisor) -->
         <section class="view-section hidden" id="view-team">
           <div class="workspace team-space">
-            <div class="panel">
+            <div class="panel admin-only">
               <div class="panel-header"><div><p class="eyebrow">Gestão</p><h2>Novo colaborador</h2></div></div>
               <form id="userForm" class="form-grid compact">
-                <label>Nome <input id="newUserName" type="text" placeholder="Nome" required></label>
+                <label>Nome <input id="newUserName" type="text" placeholder="Nome completo" required></label>
                 <label>E-mail <input id="newUserEmail" type="email" placeholder="colaborador@formis.com.br" required></label>
                 <label>Senha <input id="newUserPassword" type="password" placeholder="mínimo 6 caracteres" required></label>
                 <label>Perfil
@@ -205,7 +189,7 @@
                 <label>Telefone <input id="newUserPhone" type="tel" placeholder="(11) 4441-8838"></label>
                 <label>Ramal <input id="newUserExtension" type="text" placeholder="203"></label>
                 <label>Telefone raiz <input id="newUserRootPhone" type="tel" placeholder="(11) 94509-2300"></label>
-                <button class="primary-btn" type="submit">Adicionar</button>
+                <button class="primary-btn" type="submit">Adicionar Colaborador</button>
                 <p class="form-message" id="userMessage"></p>
               </form>
             </div>
@@ -216,10 +200,9 @@
           </div>
         </section>
 
-        <!-- Seção: Chat -->
+        <!-- Chat -->
         <section class="view-section hidden" id="view-chat">
           <div class="chat-container">
-            <!-- Lista de Conversas (Inbox) -->
             <aside class="chat-inbox">
               <div class="inbox-header">
                 <div class="chat-tabs">
@@ -227,8 +210,8 @@
                   <button class="chat-tab" data-chat-type="internal">Equipe</button>
                 </div>
                 <div id="externalChatHeader">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <h3 style="margin: 0; font-size: 0.9rem;">Atendimentos</h3>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <h3 style="margin:0;font-size:0.9rem;">Atendimentos</h3>
                     <button class="primary-btn circular" id="newChatBtn" title="Nova Conversa">+</button>
                   </div>
                   <div class="search-box">
@@ -236,8 +219,8 @@
                   </div>
                 </div>
                 <div id="internalChatHeader" class="hidden">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <h3 style="margin: 0; font-size: 0.9rem;">Colaboradores</h3>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <h3 style="margin:0;font-size:0.9rem;">Colaboradores</h3>
                   </div>
                   <div class="search-box">
                     <input type="text" id="internalSearch" placeholder="Buscar colega...">
@@ -252,14 +235,12 @@
               </div>
             </aside>
 
-            <!-- Janela de Conversa -->
             <main class="chat-window" id="chatWindow">
               <div class="chat-empty-state">
                 <span class="icon">💬</span>
                 <h3>Selecione uma conversa</h3>
                 <p>Escolha um cliente na lista ao lado para iniciar o atendimento.</p>
               </div>
-              
               <div class="chat-active hidden" id="activeChat">
                 <header class="chat-header">
                   <div class="chat-user-info">
@@ -274,11 +255,7 @@
                     <button class="icon-btn" title="Finalizar">✓</button>
                   </div>
                 </header>
-                
-                <div class="chat-messages" id="chatMessages">
-                  <!-- Mensagens serão carregadas aqui -->
-                </div>
-                
+                <div class="chat-messages" id="chatMessages"></div>
                 <footer class="chat-footer">
                   <form id="chatForm">
                     <button type="button" class="icon-btn" title="Anexar">📎</button>
@@ -291,31 +268,29 @@
           </div>
         </section>
 
-        <!-- Seção: Configurações (Consolidada) -->
+        <!-- Configurações -->
         <section class="view-section hidden" id="view-settings">
           <div class="workspace settings-space">
             <div class="panel">
               <div class="panel-header"><div><p class="eyebrow">Perfil e Segurança</p><h2>Configurações da Conta</h2></div></div>
-              
-              <div style="display: grid; gap: 24px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
-                <!-- Dados do Usuário -->
+              <div style="display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));">
                 <div>
-                  <h3 style="margin-bottom: 16px; color: var(--blue-900); font-size: 1rem;">Preferências Pessoais</h3>
+                  <h3 style="margin-bottom:16px;color:var(--blue-900);font-size:1rem;">Preferências Pessoais</h3>
                   <form id="settingsForm" class="form-grid">
                     <label>Nome de exibição <input id="settingsName" type="text" placeholder="Seu nome"></label>
                     <label>E-mail <input id="settingsEmail" type="email" disabled></label>
                     <label>Telefone raiz <input id="settingsRootPhone" type="tel" placeholder="(11) 99999-9999"></label>
                     <button class="primary-btn" type="submit">Salvar Perfil</button>
+                    <p class="form-message" id="settingsMessage"></p>
                   </form>
                 </div>
-
-                <!-- Alterar Senha -->
                 <div>
-                  <h3 style="margin-bottom: 16px; color: var(--blue-900); font-size: 1rem;">Segurança</h3>
+                  <h3 style="margin-bottom:16px;color:var(--blue-900);font-size:1rem;">Segurança</h3>
                   <form id="passwordForm" class="form-grid">
                     <label>Senha atual <input id="currentPassword" type="password" placeholder="••••••••"></label>
                     <label>Nova senha <input id="newPassword" type="password" placeholder="Mínimo 6 caracteres"></label>
                     <button class="ghost-btn" type="submit">Atualizar Senha</button>
+                    <p class="form-message" id="passwordMessage"></p>
                   </form>
                 </div>
               </div>
@@ -332,17 +307,11 @@
     <div class="modal-content">
       <div class="modal-header">
         <h3>Nova Conversa</h3>
-        <button class="icon-btn" id="closeNewChatModal">×</button>
+        <button class="icon-btn" id="closeNewChatModal">✕</button>
       </div>
       <form id="newChatForm" class="form-grid">
-        <label>
-          Nome do Cliente
-          <input type="text" id="newChatName" placeholder="Ex: João Silva">
-        </label>
-        <label>
-          Telefone
-          <input type="tel" id="newChatPhone" placeholder="(11) 99999-9999" required>
-        </label>
+        <label>Nome do Cliente <input type="text" id="newChatName" placeholder="Ex: João Silva"></label>
+        <label>Telefone <input type="tel" id="newChatPhone" placeholder="(11) 99999-9999" required></label>
         <button class="primary-btn" type="submit">Iniciar Atendimento</button>
       </form>
     </div>

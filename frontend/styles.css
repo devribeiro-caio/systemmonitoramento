@@ -804,7 +804,7 @@ select:disabled {
 }
 
 .conversation-item:hover {
-  background: #f1f5f9;
+  background: #050505;
 }
 
 .conversation-item.active {
@@ -985,7 +985,7 @@ select:disabled {
 
 .message.own .message-bubble {
   background: var(--blue-500);
-  color: #fff;
+  color: #141414;
   border-bottom-right-radius: 4px;
 }
 
