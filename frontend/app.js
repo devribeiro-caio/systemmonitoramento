@@ -474,10 +474,12 @@ function renderMessageInChat(msg) {
 async function loadInternalContacts() {
   if (!state.token) return;
   try {
-    const data = await request('/api/users', { headers: authHeaders() });
+    const data = await request('/api/users/colleagues', { headers: authHeaders() }); // ← aqui
     state.internalContacts = (data.users || []).filter(u => u._id !== state.user?.id);
     renderInternalContacts();
-  } catch (err) { console.error('Erro ao carregar contatos internos:', err); }
+  } catch (err) {
+    console.error('Erro ao carregar contatos internos:', err);
+  }
 }
 
 function renderInternalContacts() {
