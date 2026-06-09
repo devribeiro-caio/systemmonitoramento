@@ -242,27 +242,59 @@
                 <p>Escolha um cliente na lista ao lado para iniciar o atendimento.</p>
               </div>
               <div class="chat-active hidden" id="activeChat">
-                <header class="chat-header">
-                  <div class="chat-user-info">
-                    <div class="avatar" id="activeChatAvatar">?</div>
-                    <div>
-                      <h4 id="activeChatName">Nome do Cliente</h4>
-                      <small id="activeChatStatus">Online</small>
-                    </div>
-                  </div>
-                  <div class="chat-actions">
-                    <button class="icon-btn" title="Ligar">📞</button>
-                    <button class="icon-btn" title="Finalizar">✓</button>
-                  </div>
-                </header>
-                <div class="chat-messages" id="chatMessages"></div>
-                <footer class="chat-footer">
-                  <form id="chatForm">
-                    <button type="button" class="icon-btn" title="Anexar">📎</button>
-                    <input type="text" id="chatInput" placeholder="Digite sua mensagem..." autocomplete="off">
-                    <button type="submit" class="primary-btn circular" id="sendMsgBtn">➤</button>
-                  </form>
-                </footer>
+        <header class="chat-header">
+        <div class="chat-user-info">
+        <div class="avatar" id="activeChatAvatar">?</div>
+        <div>
+        <h4 id="activeChatName">Nome do Cliente</h4>
+        <small id="activeChatStatus">Online</small>
+        </div>
+        </div>
+        <div class="chat-actions">
+        <button class="chat-action-btn btn-return" id="btnReturn" title="Retornar atendimento">
+        ↩ Retornar
+        </button>
+        <button class="chat-action-btn btn-pause" id="btnPause" title="Pausar atendimento">
+        ⏸ Pausar
+      </button>
+      <button class="chat-action-btn btn-finish" id="btnFinish" title="Finalizar conversa">
+        ✓ Finalizar
+      </button>
+      <button class="chat-action-btn btn-transfer" id="btnTransfer" title="Transferir conversa">
+        ⇄ Transferir
+      </button>
+      <button class="chat-action-btn btn-call" id="btnCall" title="Ligar">
+        📞
+      </button>
+      <button class="chat-action-btn btn-menu" id="btnChatMenu" title="Mais opções">
+        ⋮
+      </button>
+      <!-- Dropdown menu -->
+      <div class="chat-dropdown hidden" id="chatDropdown">
+        <button class="dropdown-item" id="ddViewHistory">📋 Ver histórico</button>
+        <button class="dropdown-item" id="ddAddNote">📝 Adicionar nota</button>
+        <button class="dropdown-item" id="ddMarkUnread">● Marcar como não lido</button>
+        <hr style="margin:4px 0;border-color:#e2e8f0;">
+        <button class="dropdown-item danger" id="ddBlock">🚫 Bloquear contato</button>
+         </div>
+         </div>
+         </header>
+
+          <div class="chat-messages" id="chatMessages"></div>
+
+          <footer class="chat-footer">
+          <div class="chat-footer-actions">
+          <button class="footer-icon-btn" id="btnEmoji" title="Emoji">😊</button>
+          <button class="footer-icon-btn" id="btnAttach" title="Anexar arquivo">📎</button>
+          </div>
+          <input type="text" id="chatInput" placeholder="Digite uma mensagem..." autocomplete="off">
+          <div class="chat-footer-right">
+          <button class="footer-icon-btn" id="btnAudio" title="Áudio">🎙️</button>
+          <button class="footer-icon-btn" id="btnTimer" title="Agendar">⏱</button>
+          <button class="footer-send-btn" id="sendMsgBtn" title="Enviar">➤</button>
+          </div>
+          </footer>
+             </div>
               </div>
             </main>
           </div>
@@ -317,7 +349,70 @@
     </div>
   </div>
 
+  <!-- Modal de Chamada -->
+<div class="modal-overlay hidden" id="callModal">
+  <div class="modal-content" style="max-width:340px;text-align:center;">
+    <div id="callModalAvatar" style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#1e4d8c,#2d7dd2);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.8rem;font-weight:700;margin:0 auto 12px;">?</div>
+    <h3 id="callModalName" style="margin:0 0 4px;">--</h3>
+    <p id="callModalStatus" style="color:#66758a;font-size:0.85rem;margin:0 0 20px;">Chamando...</p>
+    <div id="callControls" style="display:flex;gap:16px;justify-content:center;">
+      <button class="icon-btn" id="btnMute" title="Mudo" style="width:48px;height:48px;border-radius:50%;background:#f1f5f9;font-size:1.2rem;">🎙️</button>
+      <button class="icon-btn" id="btnEndCall" title="Encerrar" style="width:48px;height:48px;border-radius:50%;background:#e53e3e;color:#fff;font-size:1.2rem;">📵</button>
+      <button class="icon-btn" id="btnSpeaker" title="Alto-falante" style="width:48px;height:48px;border-radius:50%;background:#f1f5f9;font-size:1.2rem;">🔊</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Finalizar Conversa -->
+<div class="modal-overlay hidden" id="finishModal">
+  <div class="modal-content" style="max-width:360px;">
+    <div class="modal-header">
+      <h3>Finalizar conversa</h3>
+      <button class="icon-btn" id="closeFinishModal">✕</button>
+    </div>
+    <p style="color:#66758a;font-size:0.85rem;margin:0 0 16px;">Avalie o atendimento antes de encerrar.</p>
+    <div id="starRating" style="display:flex;gap:8px;justify-content:center;margin-bottom:16px;">
+      <span class="star" data-value="1" style="font-size:2rem;cursor:pointer;color:#e2e8f0;">★</span>
+      <span class="star" data-value="2" style="font-size:2rem;cursor:pointer;color:#e2e8f0;">★</span>
+      <span class="star" data-value="3" style="font-size:2rem;cursor:pointer;color:#e2e8f0;">★</span>
+      <span class="star" data-value="4" style="font-size:2rem;cursor:pointer;color:#e2e8f0;">★</span>
+      <span class="star" data-value="5" style="font-size:2rem;cursor:pointer;color:#e2e8f0;">★</span>
+    </div>
+    <textarea id="finishNote" rows="3" placeholder="Observações (opcional)..." style="width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:0.9rem;resize:none;box-sizing:border-box;margin-bottom:16px;"></textarea>
+    <div style="display:flex;gap:10px;">
+      <button class="ghost-btn" id="cancelFinishBtn" style="flex:1;">Cancelar</button>
+      <button class="primary-btn" id="confirmFinishBtn" style="flex:1;">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Anexo -->
+<div class="modal-overlay hidden" id="attachModal">
+  <div class="modal-content" style="max-width:360px;">
+    <div class="modal-header">
+      <h3>Enviar anexo</h3>
+      <button class="icon-btn" id="closeAttachModal">✕</button>
+    </div>
+    <div id="dropZone" style="border:2px dashed #e2e8f0;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#f8fafc;margin-bottom:16px;transition:border-color .2s,background .2s;">
+      <p style="font-size:2rem;margin:0 0 8px;">📎</p>
+      <p style="color:#66758a;font-size:0.85rem;margin:0;">Arraste um arquivo ou <strong style="color:#2d7dd2;">clique para selecionar</strong></p>
+      <p style="color:#a0aec0;font-size:0.75rem;margin:4px 0 0;">Imagens, PDFs, documentos...</p>
+    </div>
+    <input type="file" id="attachFileInput" style="display:none;">
+    <div id="attachPreview" class="hidden" style="display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:16px;">
+      <div id="attachThumb" style="width:48px;height:48px;border-radius:8px;background:#dbeafe;display:flex;align-items:center;justify-content:center;font-size:1.5rem;overflow:hidden;"></div>
+      <p id="attachFileName" style="flex:1;font-size:0.85rem;color:#2d3748;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></p>
+      <button class="icon-btn" id="clearAttach" style="color:#a0aec0;">✕</button>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="ghost-btn" id="cancelAttachBtn" style="flex:1;">Cancelar</button>
+      <button class="primary-btn" id="confirmAttachBtn" style="flex:1;" disabled>Enviar</button>
+    </div>
+  </div>
+</div>
+
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
+

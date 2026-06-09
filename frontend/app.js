@@ -48,7 +48,6 @@ async function request(path, options = {}) {
 function isAdmin() { return state.user && (state.user.role === 'admin' || state.user.role === 'supervisor'); }
 
 function applyAccessControl() {
-  // Menu Equipe: só admin/supervisor
   document.querySelectorAll('.admin-only').forEach(el => {
     el.classList.toggle('hidden', !isAdmin());
   });
@@ -67,7 +66,6 @@ function switchView(viewName) {
   const section = $(`#view-${viewName}`);
   if (section) section.classList.remove('hidden');
 
-  // Preencher configurações ao entrar
   if (viewName === 'settings' && state.user) {
     $('#settingsName').value = state.user.name || '';
     $('#settingsEmail').value = state.user.email || '';
@@ -262,7 +260,6 @@ function renderUsers() {
     </article>
   `).join('');
 
-  // Listeners para remover usuário
   document.querySelectorAll('.btn-remove-user').forEach(btn => {
     btn.addEventListener('click', () => removeUser(btn.dataset.id, btn.dataset.name));
   });
@@ -420,10 +417,16 @@ function renderConversations() {
 
 async function openConversation(conversationId) {
   currentChatId = conversationId;
+  isPaused = false;
+  $('#btnPause').classList.remove('active');
+  $('#btnPause').innerHTML = '⏸ Pausar';
+  resetChatInputState();
+
   document.querySelectorAll('.conversation-item').forEach(i => i.classList.remove('active'));
   document.querySelector(`[data-conversation-id="${conversationId}"]`)?.classList.add('active');
   $('#chatWindow .chat-empty-state').classList.add('hidden');
   $('#activeChat').classList.remove('hidden');
+
   const conv = state.conversations.find(c => c._id === conversationId);
   if (conv) {
     $('#activeChatName').textContent = conv.customerName || 'Cliente';
@@ -454,6 +457,9 @@ function renderChatMessages() {
     if (msg.type === 'pabx_call') {
       return `<div class="message system"><div class="message-bubble">📞 ${escapeHtml(msg.content)}</div><div class="message-time">${time}</div></div>`;
     }
+    if (msg.senderType === 'system') {
+      return `<div class="message system"><div class="message-bubble">${escapeHtml(msg.content)}</div><div class="message-time">${time}</div></div>`;
+    }
     return `<div class="message ${isOwn ? 'own' : 'other'}"><div class="message-bubble">${escapeHtml(msg.content)}</div><div class="message-time">${time}</div></div>`;
   }).join('');
 }
@@ -462,9 +468,12 @@ function renderMessageInChat(msg) {
   const div = $('#chatMessages');
   const isOwn = msg.senderType === 'collaborator';
   const time = new Date(msg.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const html = msg.type === 'pabx_call'
-    ? `<div class="message system"><div class="message-bubble">📞 ${escapeHtml(msg.content)}</div><div class="message-time">${time}</div></div>`
-    : `<div class="message ${isOwn ? 'own' : 'other'}"><div class="message-bubble">${escapeHtml(msg.content)}</div><div class="message-time">${time}</div></div>`;
+  let html;
+  if (msg.type === 'pabx_call' || msg.senderType === 'system') {
+    html = `<div class="message system"><div class="message-bubble">${escapeHtml(msg.content)}</div><div class="message-time">${time}</div></div>`;
+  } else {
+    html = `<div class="message ${isOwn ? 'own' : 'other'}"><div class="message-bubble">${escapeHtml(msg.content)}</div><div class="message-time">${time}</div></div>`;
+  }
   div.innerHTML += html;
   div.scrollTop = div.scrollHeight;
 }
@@ -474,7 +483,7 @@ function renderMessageInChat(msg) {
 async function loadInternalContacts() {
   if (!state.token) return;
   try {
-    const data = await request('/api/users/colleagues', { headers: authHeaders() }); // ← aqui
+    const data = await request('/api/users/colleagues', { headers: authHeaders() });
     state.internalContacts = (data.users || []).filter(u => u._id !== state.user?.id);
     renderInternalContacts();
   } catch (err) {
@@ -505,10 +514,13 @@ function renderInternalContacts() {
 
 async function openInternalChat(userId) {
   currentInternalChatUserId = userId;
+  resetChatInputState();
+
   document.querySelectorAll('.internal-contact').forEach(i => i.classList.remove('active'));
   document.querySelector(`[data-user-id="${userId}"]`)?.classList.add('active');
   $('#chatWindow .chat-empty-state').classList.add('hidden');
   $('#activeChat').classList.remove('hidden');
+
   const user = state.internalContacts.find(u => u._id === userId);
   if (user) {
     $('#activeChatName').textContent = user.name;
@@ -650,6 +662,455 @@ $('#internalSearch').addEventListener('input', (e) => {
   const q = e.target.value.trim().toLowerCase();
   document.querySelectorAll('.internal-contact').forEach(item => {
     item.style.display = item.querySelector('.contact-name').textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+
+// ── Helper: resetar estado do input do chat ───────────────────────────────────
+
+function resetChatInputState() {
+  $('#chatInput').disabled = false;
+  $('#chatInput').placeholder = 'Digite uma mensagem...';
+  $('#sendMsgBtn').disabled = false;
+  $('#btnAttach').disabled = false;
+  $('#btnCall').disabled = false;
+  $('#btnFinish').disabled = false;
+  $('#btnReturn').disabled = false;
+  $('#btnPause').disabled = false;
+  $('#btnTransfer').disabled = false;
+}
+
+// ── Botão Chamada ─────────────────────────────────────────────────────────────
+
+let callTimer = null;
+let callSeconds = 0;
+
+function openCallModal() {
+  const name = $('#activeChatName').textContent || 'Contato';
+  $('#callModalAvatar').textContent = getInitials(name);
+  $('#callModalName').textContent = name;
+  $('#callModalStatus').textContent = 'Chamando...';
+  $('#callControls').style.opacity = '0.5';
+  $('#callControls').style.pointerEvents = 'none';
+  $('#callModal').classList.remove('hidden');
+  callSeconds = 0;
+
+  setTimeout(() => {
+    $('#callModalStatus').textContent = 'Em chamada · 00:00';
+    $('#callControls').style.opacity = '1';
+    $('#callControls').style.pointerEvents = '';
+    callTimer = setInterval(() => {
+      callSeconds++;
+      const m = String(Math.floor(callSeconds / 60)).padStart(2, '0');
+      const s = String(callSeconds % 60).padStart(2, '0');
+      $('#callModalStatus').textContent = `Em chamada · ${m}:${s}`;
+    }, 1000);
+  }, 2000);
+}
+
+function closeCallModal() {
+  clearInterval(callTimer);
+  callTimer = null;
+  $('#callModal').classList.add('hidden');
+}
+
+$('#btnCall').addEventListener('click', openCallModal);
+
+$('#btnEndCall').addEventListener('click', () => {
+  clearInterval(callTimer);
+  $('#callModalStatus').textContent = 'Chamada encerrada';
+  $('#callControls').style.opacity = '0.5';
+  $('#callControls').style.pointerEvents = 'none';
+  setTimeout(closeCallModal, 1500);
+});
+
+$('#callModal').addEventListener('click', (e) => { if (e.target === $('#callModal')) closeCallModal(); });
+
+// ── Botão Retornar ────────────────────────────────────────────────────────────
+
+$('#btnReturn').addEventListener('click', async () => {
+  if (!currentChatId) return;
+  try {
+    await request(`/api/attendances/${currentChatId}`, {
+      method: 'PUT', headers: authHeaders(),
+      body: JSON.stringify({ status: 'open' })
+    });
+    renderMessageInChat({ content: '↩ Atendimento retornado para a fila.', senderType: 'system', createdAt: new Date(), type: 'system' });
+    await loadAttendances();
+  } catch (err) {
+    console.warn('Retornar:', err.message);
+    renderMessageInChat({ content: '↩ Atendimento retornado para a fila.', senderType: 'system', createdAt: new Date(), type: 'system' });
+  }
+});
+
+// ── Botão Pausar ──────────────────────────────────────────────────────────────
+
+let isPaused = false;
+
+$('#btnPause').addEventListener('click', async () => {
+  isPaused = !isPaused;
+  const btn = $('#btnPause');
+  btn.classList.toggle('active', isPaused);
+  btn.innerHTML = isPaused ? '▶ Retomar' : '⏸ Pausar';
+  const msg = isPaused ? '⏸ Atendimento pausado.' : '▶ Atendimento retomado.';
+  renderMessageInChat({ content: msg, senderType: 'system', createdAt: new Date(), type: 'system' });
+  if (currentChatId) {
+    try {
+      await request(`/api/attendances/${currentChatId}`, {
+        method: 'PUT', headers: authHeaders(),
+        body: JSON.stringify({ status: isPaused ? 'in_progress' : 'open' })
+      });
+    } catch (err) { console.warn('Pausar:', err.message); }
+  }
+});
+
+// ── Botão Finalizar ───────────────────────────────────────────────────────────
+
+let selectedRating = 0;
+
+function openFinishModal() {
+  selectedRating = 0;
+  $('#finishNote').value = '';
+  document.querySelectorAll('#starRating .star').forEach(s => s.style.color = '#e2e8f0');
+  $('#finishModal').classList.remove('hidden');
+}
+
+document.querySelectorAll('#starRating .star').forEach(star => {
+  star.addEventListener('click', () => {
+    selectedRating = parseInt(star.dataset.value);
+    document.querySelectorAll('#starRating .star').forEach(s => {
+      s.style.color = parseInt(s.dataset.value) <= selectedRating ? '#f6ad55' : '#e2e8f0';
+    });
+  });
+  star.addEventListener('mouseover', () => {
+    const val = parseInt(star.dataset.value);
+    document.querySelectorAll('#starRating .star').forEach(s => {
+      s.style.color = parseInt(s.dataset.value) <= val ? '#f6ad55' : '#e2e8f0';
+    });
+  });
+  star.addEventListener('mouseout', () => {
+    document.querySelectorAll('#starRating .star').forEach(s => {
+      s.style.color = parseInt(s.dataset.value) <= selectedRating ? '#f6ad55' : '#e2e8f0';
+    });
+  });
+});
+
+$('#btnFinish').addEventListener('click', openFinishModal);
+$('#closeFinishModal').addEventListener('click', () => $('#finishModal').classList.add('hidden'));
+$('#cancelFinishBtn').addEventListener('click', () => $('#finishModal').classList.add('hidden'));
+
+$('#confirmFinishBtn').addEventListener('click', async () => {
+  $('#finishModal').classList.add('hidden');
+  const note = $('#finishNote').value.trim();
+  const stars = selectedRating ? '★'.repeat(selectedRating) : '';
+  const systemMsg = `✅ Conversa finalizada${stars ? ' · ' + stars : ''}${note ? ' · "' + note + '"' : ''}`;
+
+  renderMessageInChat({ content: systemMsg, senderType: 'system', createdAt: new Date(), type: 'system' });
+
+  if (currentChatId) {
+    try {
+      await request(`/api/attendances/${currentChatId}`, {
+        method: 'PUT', headers: authHeaders(),
+        body: JSON.stringify({ status: 'resolved', notes: note || undefined })
+      });
+      await loadAttendances();
+      await loadConversations();
+    } catch (err) { console.warn('Finalizar:', err.message); }
+  }
+
+  // Bloqueia toda a interface do chat
+  $('#chatInput').disabled = true;
+  $('#chatInput').placeholder = 'Conversa encerrada';
+  $('#sendMsgBtn').disabled = true;
+  $('#btnAttach').disabled = true;
+  $('#btnCall').disabled = true;
+  $('#btnFinish').disabled = true;
+  $('#btnReturn').disabled = true;
+  $('#btnPause').disabled = true;
+  $('#btnTransfer').disabled = true;
+  $('#btnEmoji').disabled = true;
+  $('#btnAudio').disabled = true;
+  $('#btnTimer').disabled = true;
+});
+
+// ── Botão Transferir ──────────────────────────────────────────────────────────
+
+$('#btnTransfer').addEventListener('click', () => {
+  if (!state.users.length) { alert('Nenhum colaborador disponível.'); return; }
+  const options = state.users.map((u, i) => `${i + 1}. ${u.name}`).join('\n');
+  const chosen = prompt(`Transferir para qual colaborador?\n\n${options}\n\nDigite o nome:`);
+  if (!chosen) return;
+  const target = state.users.find(u => u.name.toLowerCase().includes(chosen.toLowerCase()));
+  if (target) {
+    renderMessageInChat({ content: `⇄ Conversa transferida para ${target.name}.`, senderType: 'system', createdAt: new Date(), type: 'system' });
+  } else {
+    alert('Colaborador não encontrado. Verifique o nome e tente novamente.');
+  }
+});
+
+// ── Menu ⋮ ────────────────────────────────────────────────────────────────────
+
+$('#btnChatMenu').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('#chatDropdown').classList.toggle('hidden');
+});
+
+document.addEventListener('click', (e) => {
+  const dropdown = $('#chatDropdown');
+  if (dropdown && !dropdown.contains(e.target) && e.target !== $('#btnChatMenu')) {
+    dropdown.classList.add('hidden');
+  }
+});
+
+$('#ddViewHistory').addEventListener('click', () => {
+  $('#chatDropdown').classList.add('hidden');
+  const name = $('#activeChatName').textContent;
+  alert(`📋 Histórico de ${name}\n\nIntegre aqui com sua rota de histórico completo da conversa.`);
+});
+
+$('#ddAddNote').addEventListener('click', () => {
+  $('#chatDropdown').classList.add('hidden');
+  const note = prompt('Adicionar nota interna (visível apenas para a equipe):');
+  if (note?.trim()) {
+    renderMessageInChat({ content: `📝 Nota interna: ${note}`, senderType: 'system', createdAt: new Date(), type: 'system' });
+  }
+});
+
+$('#ddMarkUnread').addEventListener('click', () => {
+  $('#chatDropdown').classList.add('hidden');
+  const item = document.querySelector(`[data-conversation-id="${currentChatId}"]`);
+  if (item) {
+    item.classList.add('unread');
+    renderMessageInChat({ content: '● Marcado como não lido.', senderType: 'system', createdAt: new Date(), type: 'system' });
+  }
+});
+
+$('#ddBlock').addEventListener('click', () => {
+  $('#chatDropdown').classList.add('hidden');
+  const name = $('#activeChatName').textContent;
+  if (confirm(`Bloquear o contato "${name}"? Esta ação impedirá novas mensagens.`)) {
+    renderMessageInChat({ content: `🚫 Contato ${name} bloqueado.`, senderType: 'system', createdAt: new Date(), type: 'system' });
+    $('#chatInput').disabled = true;
+    $('#chatInput').placeholder = 'Contato bloqueado';
+    $('#sendMsgBtn').disabled = true;
+  }
+});
+
+// ── Botão Emoji ───────────────────────────────────────────────────────────────
+
+const emojis = ['😊','😂','👍','❤️','🙏','✅','🔥','👋','😅','🤝','💪','🎉','😍','🥹','😎','🤔','👏','🙌','💯','⭐'];
+
+$('#btnEmoji').addEventListener('click', (e) => {
+  e.stopPropagation();
+  let picker = $('#emojiPicker');
+  if (picker) { picker.remove(); return; }
+
+  picker = document.createElement('div');
+  picker.id = 'emojiPicker';
+  picker.style.cssText = `
+    position:absolute;
+    bottom:72px;
+    left:16px;
+    background:#fff;
+    border:1px solid #e2e8f0;
+    border-radius:12px;
+    padding:10px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:4px;
+    width:240px;
+    box-shadow:0 8px 24px rgba(0,0,0,.12);
+    z-index:100;
+    animation:slideUp .15s ease-out;
+  `;
+  emojis.forEach(em => {
+    const btn = document.createElement('button');
+    btn.textContent = em;
+    btn.style.cssText = 'width:36px;height:36px;border:none;background:none;font-size:1.25rem;cursor:pointer;border-radius:6px;transition:background .15s;';
+    btn.onmouseover = () => btn.style.background = '#f1f5f9';
+    btn.onmouseout  = () => btn.style.background = 'none';
+    btn.onclick = () => {
+      const input = $('#chatInput');
+      const pos = input.selectionStart;
+      const val = input.value;
+      input.value = val.slice(0, pos) + em + val.slice(pos);
+      input.focus();
+      input.setSelectionRange(pos + em.length, pos + em.length);
+      picker.remove();
+    };
+    picker.appendChild(btn);
+  });
+
+  $('#chatWindow').style.position = 'relative';
+  $('#chatWindow').appendChild(picker);
+  setTimeout(() => document.addEventListener('click', () => picker?.remove(), { once: true }), 10);
+});
+
+// ── Botão Anexo ───────────────────────────────────────────────────────────────
+
+let attachedFile = null;
+
+function openAttachModal() {
+  attachedFile = null;
+  $('#attachFileInput').value = '';
+  $('#attachPreview').classList.add('hidden');
+  $('#attachFileName').textContent = '';
+  $('#attachThumb').innerHTML = '';
+  $('#confirmAttachBtn').disabled = true;
+  $('#dropZone').classList.remove('hidden');
+  $('#attachModal').classList.remove('hidden');
+}
+
+function handleAttachFile(file) {
+  if (!file) return;
+  attachedFile = file;
+  $('#attachFileName').textContent = file.name;
+  $('#confirmAttachBtn').disabled = false;
+  $('#attachPreview').classList.remove('hidden');
+  $('#dropZone').classList.add('hidden');
+
+  if (file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = document.createElement('img');
+      img.src = e.target.result;
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:8px;';
+      $('#attachThumb').innerHTML = '';
+      $('#attachThumb').appendChild(img);
+    };
+    reader.readAsDataURL(file);
+  } else {
+    $('#attachThumb').textContent = '📄';
+  }
+}
+
+$('#btnAttach').addEventListener('click', openAttachModal);
+$('#closeAttachModal').addEventListener('click', () => $('#attachModal').classList.add('hidden'));
+$('#cancelAttachBtn').addEventListener('click', () => $('#attachModal').classList.add('hidden'));
+
+$('#dropZone').addEventListener('click', () => $('#attachFileInput').click());
+$('#attachFileInput').addEventListener('change', (e) => handleAttachFile(e.target.files[0]));
+
+$('#dropZone').addEventListener('dragover', (e) => {
+  e.preventDefault();
+  $('#dropZone').style.borderColor = '#1664ad';
+  $('#dropZone').style.background = '#ebf5ff';
+});
+$('#dropZone').addEventListener('dragleave', () => {
+  $('#dropZone').style.borderColor = '#e2e8f0';
+  $('#dropZone').style.background = '#f8fafc';
+});
+$('#dropZone').addEventListener('drop', (e) => {
+  e.preventDefault();
+  $('#dropZone').style.borderColor = '#e2e8f0';
+  $('#dropZone').style.background = '#f8fafc';
+  handleAttachFile(e.dataTransfer.files[0]);
+});
+
+$('#clearAttach').addEventListener('click', () => {
+  attachedFile = null;
+  $('#attachFileInput').value = '';
+  $('#attachPreview').classList.add('hidden');
+  $('#confirmAttachBtn').disabled = true;
+  $('#dropZone').classList.remove('hidden');
+});
+
+$('#confirmAttachBtn').addEventListener('click', () => {
+  if (!attachedFile) return;
+  $('#attachModal').classList.add('hidden');
+  const time = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const div = $('#chatMessages');
+
+  if (attachedFile.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      div.innerHTML += `
+        <div class="message own">
+          <div class="message-bubble" style="padding:4px;">
+            <img src="${e.target.result}" style="max-width:200px;max-height:200px;border-radius:8px;display:block;" alt="${escapeHtml(attachedFile.name)}">
+            <small style="display:block;padding:4px 4px 0;color:#a0aec0;font-size:0.7rem;">${escapeHtml(attachedFile.name)}</small>
+          </div>
+          <div class="message-time">${time}</div>
+        </div>`;
+      div.scrollTop = div.scrollHeight;
+    };
+    reader.readAsDataURL(attachedFile);
+  } else {
+    div.innerHTML += `
+      <div class="message own">
+        <div class="message-bubble" style="display:flex;align-items:center;gap:8px;">
+          <span>📄</span><span>${escapeHtml(attachedFile.name)}</span>
+        </div>
+        <div class="message-time">${time}</div>
+      </div>`;
+    div.scrollTop = div.scrollHeight;
+  }
+  attachedFile = null;
+});
+
+// ── Botão Áudio ───────────────────────────────────────────────────────────────
+
+let isRecording = false;
+let mediaRecorder = null;
+let recordTimer = null;
+let recordSeconds = 0;
+
+$('#btnAudio').addEventListener('click', async () => {
+  if (!isRecording) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.start();
+      isRecording = true;
+      recordSeconds = 0;
+      $('#btnAudio').textContent = '⏹';
+      $('#btnAudio').style.color = '#d94f4f';
+      recordTimer = setInterval(() => {
+        recordSeconds++;
+        const m = String(Math.floor(recordSeconds / 60)).padStart(2, '0');
+        const s = String(recordSeconds % 60).padStart(2, '0');
+        $('#chatInput').placeholder = `🎙 Gravando... ${m}:${s}`;
+      }, 1000);
+      mediaRecorder.ondataavailable = () => {};
+    } catch {
+      alert('Permissão de microfone negada. Verifique as configurações do navegador.');
+    }
+  } else {
+    mediaRecorder?.stop();
+    mediaRecorder?.stream?.getTracks().forEach(t => t.stop());
+    clearInterval(recordTimer);
+    isRecording = false;
+    const duration = `${String(Math.floor(recordSeconds / 60)).padStart(2,'0')}:${String(recordSeconds % 60).padStart(2,'0')}`;
+    $('#btnAudio').textContent = '🎙️';
+    $('#btnAudio').style.color = '';
+    $('#chatInput').placeholder = 'Digite uma mensagem...';
+    renderMessageInChat({
+      content: `🎙️ Áudio · ${duration}`,
+      senderType: 'collaborator',
+      createdAt: new Date(),
+      type: 'text'
+    });
+  }
+});
+
+// ── Botão Timer / Agendar ─────────────────────────────────────────────────────
+
+$('#btnTimer').addEventListener('click', () => {
+  const dt = prompt('Agendar lembrete para (ex: 14:30 ou amanhã 09:00):');
+  if (dt?.trim()) {
+    renderMessageInChat({
+      content: `⏱ Lembrete agendado: ${dt}`,
+      senderType: 'system',
+      createdAt: new Date(),
+      type: 'system'
+    });
+  }
+});
+
+// ── Fechar modais clicando fora ───────────────────────────────────────────────
+
+['finishModal', 'attachModal', 'callModal'].forEach(id => {
+  $(`#${id}`)?.addEventListener('click', (e) => {
+    if (e.target === $(`#${id}`)) $(`#${id}`).classList.add('hidden');
   });
 });
 
