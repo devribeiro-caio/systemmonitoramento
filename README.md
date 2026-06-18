@@ -41,6 +41,8 @@ npm run dev
 - `POST /api/pabx/wide-voice/import`: importa chamadas em lote.
 - `GET /api/pabx/calls`: lista chamadas do PABX, apenas admin/supervisor.
 - `GET /api/pabx/calls/summary`: resumo de chamadas do PABX, apenas admin/supervisor.
+- `GET /api/contacts`: lista contatos reais gerados por atendimento ou PABX.
+- `GET /api/messages`: lista mensagens/eventos reais gerados por atendimento ou PABX.
 
 Envie o token JWT no header:
 
