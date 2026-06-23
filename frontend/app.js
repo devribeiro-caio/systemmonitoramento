@@ -10,13 +10,30 @@ const state = {
   evaluations: [],
   internalChatUsers: [],
   internalChatMessages: [],
+  internalTeamSearch: '',
   selectedContactId: null,
   ticketFilter: 'open',
   ticketSearch: '',
-  knownIncomingMessageIds: new Set()
+  knownIncomingMessageIds: new Set(),
+  livePoller: null
 };
 
 let messagesInitialized = false;
+let activeAudioRecorder = null;
+let activeAudioStream = null;
+let activeAudioChunks = [];
+let activeAudioButton = null;
+let activeAudioFrame = null;
+let activeAudioTimer = null;
+let activeAudioContext = null;
+let activeAudioAnalyser = null;
+let activeAudioTarget = null;
+let activeAudioStartedAt = null;
+
+const pendingAudio = {
+  customer: null,
+  internal: null
+};
 
 const statusLabels = {
   open: 'Aberto',
@@ -36,6 +53,10 @@ const channelLabels = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+
+function digitsOnly(value) {
+  return String(value || '').replace(/\D/g, '');
+}
 
 function notifySound() {
   try {
@@ -60,6 +81,25 @@ function notifySound() {
   }
 }
 
+function ensureNotificationPermission() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+function notifyBrowser(message) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+  const title = message.contact?.name || message.phone || 'Nova mensagem';
+  const body = message.content || 'Mensagem recebida no atendimento.';
+  new Notification(title, {
+    body,
+    tag: message._id || `${message.phone}-${message.occurredAt}`,
+    silent: true
+  });
+}
+
 function deliveryTicks(status) {
   if (status === 'failed') return '<span class="delivery-ticks pending">✓</span>';
   if (['sent', 'received', 'answered', 'registered'].includes(status)) {
@@ -69,12 +109,27 @@ function deliveryTicks(status) {
 }
 
 function messageStatusLabel(message) {
+  if (message.status === 'sending') return 'enviando';
+
   if (message.status === 'failed') {
     const error = message.metadata?.delivery?.error;
     return error ? `nao enviado: ${error}` : 'nao enviado';
   }
 
   return message.status;
+}
+
+function messageContentHtml(message) {
+  const audio = message.metadata?.audio;
+  if (audio?.data) {
+    const duration = audio.durationSeconds ? ` ${formatDuration(audio.durationSeconds)}` : '';
+    return `
+      <span class="audio-message-label">Áudio${duration}</span>
+      <audio class="message-audio" controls src="${audio.data}"></audio>
+    `;
+  }
+
+  return `<span>${message.content || 'sem conteúdo'}</span>`;
 }
 
 function setCustomerChatMessage(text) {
@@ -112,6 +167,184 @@ function closeFloatingChatPanels(exceptId = '') {
   ['emojiPanel', 'attachPanel', 'chatMenu'].forEach((id) => {
     if (id !== exceptId) $(`#${id}`)?.classList.add('hidden');
   });
+}
+
+function getInternalRecipient() {
+  const recipientId = $('#internalChatRecipient')?.value;
+  return state.internalChatUsers.find((user) => user._id === recipientId);
+}
+
+function setInternalChatMessage(text) {
+  const message = $('#internalChatMessage');
+  if (message) message.textContent = text;
+}
+
+function closeInternalPanels(exceptId = '') {
+  ['internalEmojiPanel', 'internalAttachPanel', 'internalMenu'].forEach((id) => {
+    if (id !== exceptId) $(`#${id}`)?.classList.add('hidden');
+  });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function setAudioPanel(target, audio) {
+  const panel = target === 'internal' ? $('#internalAudioCapturePanel') : $('#audioCapturePanel');
+  const preview = target === 'internal' ? $('#internalAudioPreview') : $('#audioPreview');
+  const duration = target === 'internal' ? $('#internalAudioDuration') : $('#audioDuration');
+
+  if (!panel || !preview) return;
+
+  panel.classList.toggle('hidden', !audio);
+  panel.classList.toggle('recording', Boolean(audio?.recording));
+  preview.src = audio?.url || '';
+  preview.style.display = audio?.url ? '' : 'none';
+  if (audio?.url) {
+    preview.onloadedmetadata = () => {
+      if (Number.isFinite(preview.duration) && preview.duration > 0) return;
+
+      const resetTime = () => {
+        preview.currentTime = 0;
+        preview.removeEventListener('timeupdate', resetTime);
+      };
+
+      preview.addEventListener('timeupdate', resetTime);
+      try {
+        preview.currentTime = 1e9;
+      } catch (error) {
+        preview.removeEventListener('timeupdate', resetTime);
+      }
+    };
+  }
+  if (duration) duration.textContent = audio?.durationLabel || '0:00';
+}
+
+function clearAudio(target) {
+  const audio = pendingAudio[target];
+  if (audio?.url) URL.revokeObjectURL(audio.url);
+  pendingAudio[target] = null;
+  setAudioPanel(target, null);
+}
+
+function startAudioMeter(target) {
+  const meter = target === 'internal' ? $('#internalAudioMeterBar') : $('#audioMeterBar');
+  const duration = target === 'internal' ? $('#internalAudioDuration') : $('#audioDuration');
+  if (!meter || !activeAudioAnalyser) return;
+
+  if (activeAudioTimer) window.clearInterval(activeAudioTimer);
+  activeAudioTimer = window.setInterval(() => {
+    if (duration && activeAudioStartedAt) {
+      duration.textContent = formatDuration((Date.now() - activeAudioStartedAt) / 1000);
+    }
+  }, 250);
+
+  const data = new Uint8Array(activeAudioAnalyser.frequencyBinCount);
+  const draw = () => {
+    activeAudioAnalyser.getByteFrequencyData(data);
+    const average = data.reduce((sum, value) => sum + value, 0) / data.length;
+    meter.style.width = `${Math.max(8, Math.min(100, Math.round((average / 160) * 100)))}%`;
+    activeAudioFrame = requestAnimationFrame(draw);
+  };
+
+  draw();
+}
+
+function stopAudioMeter() {
+  if (activeAudioFrame) cancelAnimationFrame(activeAudioFrame);
+  if (activeAudioTimer) window.clearInterval(activeAudioTimer);
+  activeAudioFrame = null;
+  activeAudioTimer = null;
+  activeAudioContext?.close?.().catch(() => {});
+  activeAudioContext = null;
+  activeAudioAnalyser = null;
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, Math.round(seconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const rest = String(safeSeconds % 60).padStart(2, '0');
+  return `${minutes}:${rest}`;
+}
+
+async function toggleAudioRecording(button, setMessage, target = 'customer') {
+  if (activeAudioRecorder && activeAudioRecorder.state === 'recording') {
+    activeAudioRecorder.stop();
+    button?.classList.remove('recording');
+    setMessage('Finalizando áudio...');
+    return;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    setMessage('Gravação de áudio não está disponível neste navegador.');
+    return;
+  }
+
+  try {
+    activeAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    activeAudioChunks = [];
+    activeAudioButton = button;
+    activeAudioTarget = target;
+    activeAudioStartedAt = Date.now();
+    activeAudioContext = new AudioContext();
+    activeAudioAnalyser = activeAudioContext.createAnalyser();
+    activeAudioAnalyser.fftSize = 256;
+    activeAudioContext.createMediaStreamSource(activeAudioStream).connect(activeAudioAnalyser);
+    const preferredTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus'
+    ];
+    const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+    activeAudioRecorder = new MediaRecorder(activeAudioStream, mimeType ? { mimeType } : undefined);
+    setAudioPanel(target, { url: '', recording: true, durationLabel: '0:00' });
+    startAudioMeter(target);
+
+    activeAudioRecorder.addEventListener('dataavailable', (event) => {
+      if (event.data?.size) activeAudioChunks.push(event.data);
+    });
+
+    activeAudioRecorder.addEventListener('stop', async () => {
+      const durationSeconds = (Date.now() - activeAudioStartedAt) / 1000;
+      const blob = new Blob(activeAudioChunks, { type: activeAudioRecorder.mimeType || 'audio/webm' });
+      const url = URL.createObjectURL(blob);
+      const dataUrl = await blobToDataUrl(blob);
+      activeAudioStream?.getTracks().forEach((track) => track.stop());
+      activeAudioStream = null;
+      activeAudioRecorder = null;
+      activeAudioChunks = [];
+      stopAudioMeter();
+      activeAudioButton?.classList.remove('recording');
+      activeAudioButton = null;
+      pendingAudio[activeAudioTarget || target] = {
+        blob,
+        url,
+        dataUrl,
+        mimeType: blob.type,
+        fileName: `audio-${Date.now()}.webm`,
+        size: blob.size,
+        durationSeconds,
+        durationLabel: formatDuration(durationSeconds)
+      };
+      activeAudioStartedAt = null;
+      setAudioPanel(activeAudioTarget || target, pendingAudio[activeAudioTarget || target]);
+      activeAudioTarget = null;
+      const input = target === 'internal' ? $('#internalChatContent') : $('#customerChatContent');
+      input?.focus();
+      setMessage(`Áudio gravado (${Math.max(1, Math.round(blob.size / 1024))} KB). Clique em enviar para encaminhar.`);
+    });
+
+    activeAudioRecorder.start();
+    button?.classList.add('recording');
+    setMessage('Gravando áudio... clique no microfone para parar.');
+  } catch (error) {
+    setMessage('Permissão de microfone negada ou indisponível.');
+  }
 }
 
 function ensureLiveDataPanels() {
@@ -215,14 +448,12 @@ function ensureViewStructure() {
 }
 
 function setView(viewName) {
-  const normalizedView = viewName === 'team' ? 'settings' : viewName;
-  const view = ['dashboard', 'evaluations', 'attendances', 'chat', 'settings'].includes(normalizedView)
-    ? normalizedView
+  const view = ['dashboard', 'evaluations', 'attendances', 'chat', 'team', 'settings'].includes(viewName)
+    ? viewName
     : 'dashboard';
 
   document.querySelectorAll('.nav-item').forEach((item) => {
-    const itemView = item.dataset.view === 'team' ? 'settings' : item.dataset.view;
-    item.classList.toggle('active', itemView === view);
+    item.classList.toggle('active', item.dataset.view === view);
   });
 
   document.querySelectorAll('.app-view').forEach((panel) => {
@@ -301,6 +532,7 @@ function setAuthenticated(isAuthenticated) {
   $('#appContent').classList.toggle('hidden', !isAuthenticated);
   updateUserUI();
   applyRolePermissions();
+  if (isAuthenticated) setupRealtimeSocket(); // ← linha nova
 }
 
 function renderMetrics() {
@@ -312,6 +544,105 @@ function renderMetrics() {
   $('#metricProgress').textContent = progress;
   $('#metricResolved').textContent = resolved;
   $('#metricRoot').textContent = state.user?.rootPhone || '--';
+  renderAttendanceAnalytics();
+}
+
+function sameDay(dateA, dateB) {
+  return dateA.getFullYear() === dateB.getFullYear()
+    && dateA.getMonth() === dateB.getMonth()
+    && dateA.getDate() === dateB.getDate();
+}
+
+function groupCount(items, getKey) {
+  return items.reduce((acc, item) => {
+    const key = getKey(item) || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function renderBarList(elementId, rows, total, labelMap = {}) {
+  const element = $(`#${elementId}`);
+  if (!element) return;
+
+  if (!rows.length) {
+    element.innerHTML = '<p class="empty-state">Sem dados para exibir.</p>';
+    return;
+  }
+
+  element.innerHTML = rows.map(([key, value]) => {
+    const percent = total ? Math.round((value / total) * 100) : 0;
+    return `
+      <div class="bar-row">
+        <div><strong>${labelMap[key] || key}</strong><small>${value} atendimentos</small></div>
+        <span>${percent}%</span>
+        <i style="width: ${Math.max(6, percent)}%"></i>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderAttendanceAnalytics() {
+  const statusChart = $('#statusChart');
+  if (!statusChart) return;
+
+  const attendances = state.attendances || [];
+  const total = attendances.length;
+  const today = new Date();
+  const todayTotal = attendances.filter((item) => sameDay(new Date(item.startedAt || item.createdAt), today)).length;
+  const resolved = attendances.filter((item) => item.status === 'resolved').length;
+  const open = attendances.filter((item) => ['open', 'in_progress'].includes(item.status)).length;
+
+  $('#chartToday').textContent = todayTotal;
+  $('#chartResolution').textContent = total ? `${Math.round((resolved / total) * 100)}%` : '0%';
+  $('#chartOpen').textContent = open;
+
+  const statusRows = Object.entries(groupCount(attendances, (item) => item.status))
+    .sort((a, b) => b[1] - a[1]);
+  renderBarList('statusChart', statusRows, total, statusLabels);
+
+  const channelRows = Object.entries(groupCount(attendances, (item) => item.channel))
+    .sort((a, b) => b[1] - a[1]);
+  renderBarList('channelChart', channelRows, total, channelLabels);
+
+  const collaboratorRows = Object.entries(groupCount(attendances, (item) => (
+    item.collaborator?.name || item.collaborator?.email || 'Sem colaborador'
+  ))).sort((a, b) => b[1] - a[1]).slice(0, 6);
+
+  const collaboratorChart = $('#collaboratorChart');
+  if (collaboratorChart) {
+    collaboratorChart.innerHTML = collaboratorRows.length
+      ? collaboratorRows.map(([name, count], index) => `
+          <div class="ranking-row">
+            <span>${index + 1}</span>
+            <strong>${name}</strong>
+            <small>${count}</small>
+          </div>
+        `).join('')
+      : '<p class="empty-state">Sem dados para exibir.</p>';
+  }
+
+  const dailyChart = $('#dailyChart');
+  if (dailyChart) {
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (6 - index));
+      return date;
+    });
+    const max = Math.max(1, ...days.map((day) => attendances.filter((item) => sameDay(new Date(item.startedAt || item.createdAt), day)).length));
+
+    dailyChart.innerHTML = days.map((day) => {
+      const count = attendances.filter((item) => sameDay(new Date(item.startedAt || item.createdAt), day)).length;
+      const height = Math.max(8, Math.round((count / max) * 100));
+      return `
+        <div class="column-item">
+          <strong>${count}</strong>
+          <i style="height: ${height}%"></i>
+          <small>${day.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}</small>
+        </div>
+      `;
+    }).join('');
+  }
 }
 
 function renderAttendances() {
@@ -362,9 +693,12 @@ function renderUsers() {
     <article class="team-member">
       <div>
         <strong>${user.name}</strong>
-        <small>${user.email} - ${user.phone || 'sem telefone'} - Ramal ${user.extension || '--'}</small>
+        <small>${user.email} - ${user.department || 'sem departamento'} - ${user.phone || 'sem telefone'} - Ramal ${user.extension || '--'}</small>
       </div>
-      <span class="role-pill">${user.role}</span>
+      <div class="team-member-actions">
+        <span class="role-pill">${user.role}</span>
+        <button class="danger-btn remove-user-btn" type="button" data-user="${user._id || user.id}" ${user._id === state.user?.id || user.id === state.user?.id ? 'disabled' : ''}>Remover</button>
+      </div>
     </article>
   `).join('');
 }
@@ -400,9 +734,15 @@ function renderContacts() {
       if (contact.remoteJid && !contact.remoteJid.endsWith('@s.whatsapp.net')) return false;
       return contact.phone && contact.phone !== '0';
     });
+    const selectedBeforeRender = state.selectedContactId || customerSelect.value;
     customerSelect.innerHTML = chatContacts.length
       ? chatContacts.map((contact) => `<option value="${contact._id}" data-phone="${contact.phone}">${contact.name || contact.phone} - ${contact.phone}</option>`).join('')
       : '<option value="">Nenhum cliente cadastrado</option>';
+
+    if (selectedBeforeRender && chatContacts.some((contact) => contact._id === selectedBeforeRender)) {
+      customerSelect.value = selectedBeforeRender;
+      state.selectedContactId = selectedBeforeRender;
+    }
   }
 
   const ticketList = $('#customerTicketList');
@@ -421,7 +761,8 @@ function renderContacts() {
 
     ticketList.innerHTML = visibleContacts.length
       ? visibleContacts.map((contact, index) => {
-          const lastMessage = state.messages.find((message) => message.phone === contact.phone);
+          const contactPhone = digitsOnly(contact.phone);
+          const lastMessage = state.messages.find((message) => digitsOnly(message.phone) === contactPhone);
           const avatar = contact.profilePictureUrl
             ? `<img class="ticket-avatar-img" src="${contact.profilePictureUrl}" alt="${contact.name || contact.phone}">`
             : `<span class="ticket-avatar">${initials(contact.name || contact.phone)}</span>`;
@@ -455,7 +796,7 @@ function renderContacts() {
     ? filteredContacts.find((contact) => `${contact.name || ''} ${contact.phone || ''}`.toLowerCase().includes(state.ticketSearch.toLowerCase()))
     : filteredContacts[0];
 
-  if (firstVisible && customerSelect && !customerSelect.value) {
+  if (firstVisible && customerSelect && !state.selectedContactId && !customerSelect.value) {
     selectCustomerTicket(firstVisible._id);
   } else if (!firstVisible && customerSelect) {
     state.selectedContactId = null;
@@ -497,10 +838,11 @@ function renderCustomerChat() {
 
   const selected = select.options[select.selectedIndex];
   const phone = selected?.dataset.phone;
+  const normalizedPhone = digitsOnly(phone);
   const contact = state.contacts.find((item) => item._id === select.value);
   const messages = phone
     ? state.messages
-        .filter((message) => message.phone === phone)
+        .filter((message) => digitsOnly(message.phone) === normalizedPhone)
         .sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt))
     : [];
 
@@ -523,7 +865,7 @@ function renderCustomerChat() {
     <article class="message-bubble ${message.direction === 'outgoing' ? 'outgoing' : 'incoming'} ${message.status === 'failed' ? 'failed' : ''}" data-message="${message._id}">
       <button class="delete-message-btn" type="button" title="Apagar mensagem">×</button>
       <strong>${message.direction === 'outgoing' ? state.user.name : contact?.name || message.phone}</strong>
-      <span>${message.content || 'sem conteúdo'}</span>
+      ${messageContentHtml(message)}
       <small>${new Date(message.occurredAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ${message.direction === 'outgoing' ? deliveryTicks(message.status) : ''}</small>
       ${message.status === 'failed' ? `<em class="message-error">${messageStatusLabel(message)}</em>` : ''}
     </article>
@@ -654,16 +996,57 @@ function renderEvaluations() {
 
 function renderInternalChatUsers() {
   const select = $('#internalChatRecipient');
+  const list = $('#internalTeamList');
   if (!select) return;
 
+  const selectedBeforeRender = select.value;
   select.innerHTML = state.internalChatUsers.length
     ? state.internalChatUsers.map((user) => `<option value="${user._id}">${user.name} - ${user.role}</option>`).join('')
     : '<option value="">Nenhum colaborador disponível</option>';
+
+  if (selectedBeforeRender && state.internalChatUsers.some((user) => user._id === selectedBeforeRender)) {
+    select.value = selectedBeforeRender;
+  } else if (!select.value && state.internalChatUsers[0]) {
+    select.value = state.internalChatUsers[0]._id;
+  }
+
+  if (list) {
+    const visibleUsers = state.internalTeamSearch
+      ? state.internalChatUsers.filter((user) => `${user.name || ''} ${user.email || ''} ${user.phone || ''} ${user.department || ''}`.toLowerCase().includes(state.internalTeamSearch.toLowerCase()))
+      : state.internalChatUsers;
+
+    if (!visibleUsers.length) {
+      list.innerHTML = '<p class="empty-state">Nenhum colaborador ativo encontrado.</p>';
+    } else {
+      list.innerHTML = visibleUsers.map((user) => `
+        <button class="internal-team-item ${select.value === user._id ? 'active' : ''}" type="button" data-user="${user._id}">
+          <span class="internal-avatar">${initials(user.name)}</span>
+          <span>
+            <strong>${user.name}</strong>
+            <small>${user.department || 'sem departamento'} - ${user.role} - ${user.phone || user.email}</small>
+          </span>
+        </button>
+      `).join('');
+
+      list.querySelectorAll('.internal-team-item').forEach((button) => {
+        button.addEventListener('click', async () => {
+          select.value = button.dataset.user;
+          renderInternalChatUsers();
+          await loadInternalChatMessages();
+        });
+      });
+    }
+  }
+
 }
 
 function renderInternalChatMessages() {
   const list = $('#internalChatList');
   if (!list) return;
+
+  const recipient = state.internalChatUsers.find((user) => user._id === $('#internalChatRecipient')?.value);
+  const title = $('#internalChatTitle');
+  if (title) title.textContent = recipient ? recipient.name : 'Selecione um colaborador';
 
   if (!state.internalChatMessages.length) {
     list.innerHTML = '<p class="empty-state">Selecione um colaborador para carregar a conversa.</p>';
@@ -671,14 +1054,16 @@ function renderInternalChatMessages() {
   }
 
   list.innerHTML = state.internalChatMessages.map((message) => `
-    <article class="team-member">
-      <div>
-        <strong>${message.sender?._id === state.user.id ? 'Você' : message.sender?.name || 'Colaborador'}</strong>
-        <small>${message.content}</small>
-      </div>
-      <span class="list-meta">${new Date(message.createdAt).toLocaleString('pt-BR')}</span>
+    <article class="internal-message ${message.sender?._id === state.user.id ? 'own' : 'other'}">
+      <strong>${message.sender?._id === state.user.id ? 'Você' : message.sender?.name || 'Colaborador'}</strong>
+      <span>${message.content}</span>
+      <small>${new Date(message.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</small>
     </article>
   `).join('');
+
+  requestAnimationFrame(() => {
+    list.scrollTop = list.scrollHeight;
+  });
 }
 
 async function loadAttendances() {
@@ -700,9 +1085,33 @@ async function loadUsers() {
     const data = await request('/api/users', { headers: authHeaders() });
     state.users = data.users || [];
     renderUsers();
+    renderAttendanceAnalytics();
   } catch (error) {
     state.users = [];
     renderUsers();
+    renderAttendanceAnalytics();
+  }
+}
+
+async function removeUser(userId) {
+  if (!userId) return;
+
+  const user = state.users.find((item) => (item._id || item.id) === userId);
+  if (!user) return;
+
+  const confirmed = window.confirm(`Remover ${user.name} da equipe?`);
+  if (!confirmed) return;
+
+  try {
+    await request(`/api/users/${userId}`, {
+      method: 'DELETE',
+      headers: authHeaders()
+    });
+
+    $('#userMessage').textContent = 'Colaborador removido.';
+    await Promise.all([loadUsers(), loadInternalChatUsers()]);
+  } catch (error) {
+    $('#userMessage').textContent = error.message;
   }
 }
 
@@ -720,15 +1129,20 @@ async function loadMessages() {
   const data = await request('/api/messages', { headers: authHeaders() });
   const previousCount = state.knownIncomingMessageIds.size;
   state.messages = data.messages || [];
+  const newIncomingMessages = [];
   state.messages
     .filter((message) => message.direction === 'incoming')
     .forEach((message) => {
       const id = message._id || `${message.phone}-${message.occurredAt}-${message.content}`;
+      if (messagesInitialized && !state.knownIncomingMessageIds.has(id)) {
+        newIncomingMessages.push(message);
+      }
       state.knownIncomingMessageIds.add(id);
     });
 
   if (messagesInitialized && state.knownIncomingMessageIds.size > previousCount) {
     notifySound();
+    notifyBrowser(newIncomingMessages[0]);
   }
   messagesInitialized = true;
 
@@ -749,6 +1163,10 @@ async function loadInternalChatUsers() {
   const data = await request('/api/internal-chat/users', { headers: authHeaders() });
   state.internalChatUsers = data.users || [];
   renderInternalChatUsers();
+
+  if ($('#internalChatRecipient')?.value) {
+    await loadInternalChatMessages();
+  }
 }
 
 async function loadInternalChatMessages() {
@@ -773,6 +1191,26 @@ async function refreshData() {
   ]);
 }
 
+function startLivePolling() {
+  if (state.livePoller || !state.token) return;
+
+  state.livePoller = window.setInterval(async () => {
+    if (!state.token) return;
+
+    try {
+      await Promise.all([loadContacts(), loadMessages()]);
+    } catch (error) {
+      $('#connectionStatus').textContent = 'API indisponível';
+    }
+  }, 2500);
+}
+
+function stopLivePolling() {
+  if (!state.livePoller) return;
+  window.clearInterval(state.livePoller);
+  state.livePoller = null;
+}
+
 async function syncEvolution() {
   const syncMessage = $('#syncMessage');
   if (syncMessage) syncMessage.textContent = 'Verificando Evolution API...';
@@ -791,7 +1229,9 @@ async function syncEvolution() {
     });
 
     if (syncMessage) {
-      syncMessage.textContent = `Sincronizados: ${result.importedContacts || 0} contatos e ${result.importedMessages || 0} mensagens.`;
+      const contactsTotal = result.importedContacts ?? result.chats?.created ?? 0;
+      const messagesTotal = result.importedMessages ?? result.messages?.imported ?? 0;
+      syncMessage.textContent = `Sincronizados: ${contactsTotal} contatos e ${messagesTotal} mensagens.`;
     }
 
     await Promise.all([loadContacts(), loadMessages()]);
@@ -816,6 +1256,7 @@ async function login(email, password) {
   localStorage.setItem('formis_user', JSON.stringify(state.user));
   setAuthenticated(true);
   await refreshData();
+  startLivePolling();
 }
 
 async function createFirstAdmin() {
@@ -848,6 +1289,7 @@ async function createFirstAdmin() {
 }
 
 function logout() {
+  stopLivePolling();
   state.token = null;
   state.user = null;
   state.attendances = [];
@@ -864,6 +1306,8 @@ function logout() {
 }
 
 function bindEvents() {
+  document.addEventListener('click', ensureNotificationPermission, { once: true });
+
   $('#loginForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     setMessage('Entrando...');
@@ -922,9 +1366,10 @@ function bindEvents() {
           name: $('#newUserName').value.trim(),
           email: $('#newUserEmail').value.trim(),
           password: $('#newUserPassword').value,
-          role: $('#newUserRole').value,
+          role: $('#newUserIsAdmin')?.checked ? 'admin' : $('#newUserRole').value,
           phone: $('#newUserPhone').value.trim(),
           extension: $('#newUserExtension')?.value.trim(),
+          department: $('#newUserDepartment')?.value.trim(),
           rootPhone: $('#newUserRootPhone').value.trim() || state.user.rootPhone
         })
       });
@@ -935,6 +1380,13 @@ function bindEvents() {
     } catch (error) {
       $('#userMessage').textContent = error.message;
     }
+  });
+
+  $('#teamList')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('.remove-user-btn');
+    if (!button || button.disabled) return;
+
+    await removeUser(button.dataset.user);
   });
 
   $('#evaluationForm')?.addEventListener('submit', async (event) => {
@@ -962,9 +1414,108 @@ function bindEvents() {
 
   $('#internalChatRecipient')?.addEventListener('change', loadInternalChatMessages);
 
+  $('#internalChatContent')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || !pendingAudio.internal) return;
+
+    event.preventDefault();
+    $('#internalChatForm')?.requestSubmit();
+  });
+
+  $('#internalTeamSearch')?.addEventListener('input', (event) => {
+    state.internalTeamSearch = event.target.value;
+    renderInternalChatUsers();
+  });
+
+  $('#internalBackBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    $('#internalTeamSearch')?.focus();
+    setInternalChatMessage('Lista de colaboradores selecionada.');
+  });
+
+  $('#internalInfoBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    const user = getInternalRecipient();
+    setInternalChatMessage(user ? `${user.name} - ${user.role} - ${user.phone || user.email}` : 'Selecione um colaborador.');
+  });
+
+  $('#internalCallBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    const user = getInternalRecipient();
+    setInternalChatMessage(user?.phone ? `Chamada interna preparada para ${user.phone}.` : 'Este colaborador nao tem telefone cadastrado.');
+  });
+
+  $('#internalReturnBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    $('#internalTeamSearch')?.focus();
+    setInternalChatMessage('Conversa retornada para a lista da equipe.');
+  });
+
+  $('#internalPauseBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    $('#internalPauseBtn')?.classList.toggle('active');
+    setInternalChatMessage($('#internalPauseBtn')?.classList.contains('active') ? 'Conversa interna pausada.' : 'Conversa interna retomada.');
+  });
+
+  $('#internalFinishBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    $('#internalFinishBtn')?.classList.toggle('active');
+    setInternalChatMessage($('#internalFinishBtn')?.classList.contains('active') ? 'Conversa interna finalizada.' : 'Conversa interna reaberta.');
+  });
+
+  $('#internalTransferBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    const user = getInternalRecipient();
+    setInternalChatMessage(user ? `Transferencia interna preparada para ${user.name}.` : 'Selecione um colaborador para transferir.');
+  });
+
+  $('#internalDeleteBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    state.internalChatMessages = [];
+    renderInternalChatMessages();
+    setInternalChatMessage('Conversa limpa nesta tela.');
+  });
+
+  $('#internalSearchBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    $('#internalTeamSearch')?.focus();
+  });
+
+  $('#internalMenuBtn')?.addEventListener('click', () => {
+    closeInternalPanels('internalMenu');
+    $('#internalMenu')?.classList.toggle('hidden');
+  });
+
+  $('#internalCopyContactBtn')?.addEventListener('click', async () => {
+    const user = getInternalRecipient();
+    if (user) {
+      await navigator.clipboard?.writeText(user.phone || user.email || user.name);
+      setInternalChatMessage('Contato copiado.');
+    }
+    $('#internalMenu')?.classList.add('hidden');
+  });
+
+  $('#internalMarkUnreadBtn')?.addEventListener('click', () => {
+    setInternalChatMessage('Conversa marcada como não lida nesta tela.');
+    $('#internalMenu')?.classList.add('hidden');
+  });
+
+  $('#internalClearChatBtn')?.addEventListener('click', () => {
+    state.internalChatMessages = [];
+    renderInternalChatMessages();
+    setInternalChatMessage('Conversa limpa nesta tela.');
+    $('#internalMenu')?.classList.add('hidden');
+  });
+
   $('#internalChatForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     $('#internalChatMessage').textContent = 'Enviando...';
+    const internalAudio = pendingAudio.internal;
+    const internalContent = $('#internalChatContent').value.trim();
+
+    if (!internalContent && !internalAudio) {
+      $('#internalChatMessage').textContent = '';
+      return;
+    }
 
     try {
       await request('/api/internal-chat/messages', {
@@ -972,11 +1523,12 @@ function bindEvents() {
         headers: authHeaders(),
         body: JSON.stringify({
           recipient: $('#internalChatRecipient').value,
-          content: $('#internalChatContent').value.trim()
+          content: internalAudio ? (internalContent || `[Áudio interno ${internalAudio.durationLabel || ''}]`.trim()) : internalContent
         })
       });
 
       $('#internalChatContent').value = '';
+      clearAudio('internal');
       $('#internalChatMessage').textContent = 'Mensagem enviada.';
       await loadInternalChatMessages();
     } catch (error) {
@@ -984,7 +1536,61 @@ function bindEvents() {
     }
   });
 
+  $('#internalEmojiToggle')?.addEventListener('click', () => {
+    closeInternalPanels('internalEmojiPanel');
+    $('#internalEmojiPanel')?.classList.toggle('hidden');
+  });
+
+  document.querySelectorAll('#internalEmojiPanel button').forEach((button) => {
+    button.addEventListener('click', () => {
+      const input = $('#internalChatContent');
+      input.value = `${input.value}${button.textContent}`;
+      input.focus();
+    });
+  });
+
+  $('#internalAttachBtn')?.addEventListener('click', () => {
+    closeInternalPanels('internalAttachPanel');
+    $('#internalAttachPanel')?.classList.toggle('hidden');
+  });
+
+  document.querySelectorAll('#internalAttachPanel button').forEach((button) => {
+    button.addEventListener('click', () => {
+      const input = $('#internalAttachmentInput');
+      if (!input) return;
+
+      const kind = button.dataset.attachKind;
+      input.accept = kind === 'image' ? 'image/*' : kind === 'video' ? 'video/*' : '';
+      input.click();
+      $('#internalAttachPanel')?.classList.add('hidden');
+    });
+  });
+
+  $('#internalAttachmentInput')?.addEventListener('change', (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setInternalChatMessage(`Anexo selecionado: ${file.name}`);
+  });
+
+  $('#internalVoiceBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    toggleAudioRecording($('#internalVoiceBtn'), setInternalChatMessage, 'internal');
+  });
+
+  $('#internalTimerBtn')?.addEventListener('click', () => {
+    closeInternalPanels();
+    setInternalChatMessage('Agendamento interno pronto para próxima etapa.');
+  });
+
   $('#customerChatContact')?.addEventListener('change', renderCustomerChat);
+
+  $('#customerChatContent')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || !pendingAudio.customer) return;
+
+    event.preventDefault();
+    $('#customerChatForm')?.requestSubmit();
+  });
 
   $('#ticketSearchInput')?.addEventListener('input', (event) => {
     state.ticketSearch = event.target.value;
@@ -1088,7 +1694,17 @@ function bindEvents() {
 
   $('#voiceBtn')?.addEventListener('click', () => {
     closeFloatingChatPanels();
-    setCustomerChatMessage('Gravação de áudio pronta para a próxima etapa de integração.');
+    toggleAudioRecording($('#voiceBtn'), setCustomerChatMessage, 'customer');
+  });
+
+  $('#cancelAudioBtn')?.addEventListener('click', () => {
+    clearAudio('customer');
+    setCustomerChatMessage('Áudio cancelado.');
+  });
+
+  $('#internalCancelAudioBtn')?.addEventListener('click', () => {
+    clearAudio('internal');
+    setInternalChatMessage('Áudio cancelado.');
   });
 
   $('#timerBtn')?.addEventListener('click', () => {
@@ -1152,24 +1768,75 @@ function bindEvents() {
 
   $('#customerChatForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    $('#customerChatMessage').textContent = 'Enviando mensagem...';
+    const contactId = state.selectedContactId || $('#customerChatContact')?.value;
+    const contact = state.contacts.find((item) => item._id === contactId);
+    const content = $('#customerChatContent').value.trim();
+    const audio = pendingAudio.customer;
+
+    if (!contactId || !contact) {
+      setTicketActionMessage('Selecione um cliente antes de responder.');
+      return;
+    }
+
+    if (!content && !audio) return;
+
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMessage = {
+      _id: tempId,
+      contact: contact._id,
+      phone: contact.phone,
+      channel: 'whatsapp',
+      direction: 'outgoing',
+      status: 'sending',
+      content: audio ? (content || `[Áudio ${audio.durationLabel || ''}]`.trim()) : content,
+      occurredAt: new Date().toISOString(),
+      metadata: {
+        optimistic: true,
+        audio: audio ? {
+          data: audio.dataUrl,
+          mimeType: audio.mimeType,
+          fileName: audio.fileName,
+          size: audio.size,
+          durationSeconds: audio.durationSeconds
+        } : undefined
+      }
+    };
+
+    state.messages = [optimisticMessage, ...state.messages];
+    $('#customerChatContent').value = '';
+    setTicketActionMessage(audio ? 'Enviando áudio...' : 'Enviando...');
+    renderMessages();
 
     try {
-      await request('/api/messages', {
+      const result = await request('/api/messages', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
-          contact: $('#customerChatContact').value,
-          content: $('#customerChatContent').value.trim(),
-          channel: 'whatsapp'
+          contact: contactId,
+          content: audio ? (content || `[Áudio ${audio.durationLabel || ''}]`.trim()) : content,
+          channel: 'whatsapp',
+          audio: audio ? {
+            data: audio.dataUrl,
+            mimeType: audio.mimeType,
+            fileName: audio.fileName,
+            size: audio.size,
+            durationSeconds: audio.durationSeconds
+          } : undefined
         })
       });
 
-      $('#customerChatContent').value = '';
-      $('#customerChatMessage').textContent = 'Mensagem enviada.';
-      await loadMessages();
+      state.messages = state.messages.map((message) => (
+        message._id === tempId ? result.message : message
+      ));
+      setTicketActionMessage(audio ? 'Áudio enviado.' : 'Mensagem enviada.');
+      clearAudio('customer');
+      renderMessages();
     } catch (error) {
-      $('#customerChatMessage').textContent = error.message;
+      state.messages = state.messages.filter((message) => message._id !== tempId);
+      $('#customerChatContent').value = content;
+      setTicketActionMessage(error.message || 'Não foi possível enviar o áudio.');
+      if (audio) setAudioPanel('customer', audio);
+      renderMessages();
     }
   });
 
@@ -1185,6 +1852,34 @@ function bindEvents() {
   });
 }
 
+function setupRealtimeSocket() {
+  if (!window.io || state.socket) return;
+
+  state.socket = window.io('http://127.0.0.1:3000');
+
+  state.socket.on('connect', () => {
+    state.socket.emit('authenticate', state.token);
+  });
+
+  state.socket.on('authenticated', ({ success }) => {
+    if (success && state.user?.rootPhone) {
+      state.socket.emit('join_dashboard', digitsOnly(state.user.rootPhone) || state.user.rootPhone);
+    }
+  });
+
+  state.socket.on('new_message', () => {
+    loadMessages();
+  });
+
+  state.socket.on('chat_list_updated', () => {
+    Promise.all([loadContacts(), loadMessages()]).catch(() => {});
+  });
+
+  state.socket.on('new_attendance', () => {
+    Promise.all([loadContacts(), loadMessages()]).catch(() => {});
+  });
+}
+
 ensureLiveDataPanels();
 ensureViewStructure();
 bindEvents();
@@ -1195,4 +1890,5 @@ if (state.token && state.user) {
   refreshData().catch(() => {
     $('#connectionStatus').textContent = 'API indisponível';
   });
+  startLivePolling();
 }

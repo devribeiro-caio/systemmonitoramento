@@ -31,6 +31,10 @@
           <span class="icon" aria-hidden="true">●</span>
           <span>Chat</span>
         </button>
+        <button class="nav-item" data-view="team" type="button">
+          <span class="icon" aria-hidden="true">◉</span>
+          <span>Equipe</span>
+        </button>
         <button class="nav-item" data-view="settings" type="button">
           <span class="icon" aria-hidden="true">⚙</span>
           <span>Configurações</span>
@@ -83,6 +87,39 @@
             <article class="metric-card"><small>Resolvidos</small><strong id="metricResolved">0</strong><span>finalizados pela equipe</span></article>
             <article class="metric-card accent"><small>Telefone raiz</small><strong id="metricRoot">--</strong><span>base monitorada</span></article>
           </div>
+
+          <section class="analytics-space">
+            <article class="analytics-panel analytics-summary">
+              <div class="panel-header">
+                <div><p class="eyebrow">Atendimentos</p><h2>Indicadores</h2></div>
+              </div>
+              <div class="analytics-kpis">
+                <div><small>Hoje</small><strong id="chartToday">0</strong></div>
+                <div><small>Taxa resolução</small><strong id="chartResolution">0%</strong></div>
+                <div><small>Abertos</small><strong id="chartOpen">0</strong></div>
+              </div>
+            </article>
+
+            <article class="analytics-panel">
+              <div class="panel-header"><div><p class="eyebrow">Status</p><h2>Fila atual</h2></div></div>
+              <div class="bar-list" id="statusChart"></div>
+            </article>
+
+            <article class="analytics-panel wide-chart">
+              <div class="panel-header"><div><p class="eyebrow">Volume</p><h2>Últimos 7 dias</h2></div></div>
+              <div class="column-chart" id="dailyChart"></div>
+            </article>
+
+            <article class="analytics-panel">
+              <div class="panel-header"><div><p class="eyebrow">Canais</p><h2>Origem dos atendimentos</h2></div></div>
+              <div class="bar-list" id="channelChart"></div>
+            </article>
+
+            <article class="analytics-panel">
+              <div class="panel-header"><div><p class="eyebrow">Equipe</p><h2>Ranking por colaborador</h2></div></div>
+              <div class="ranking-list" id="collaboratorChart"></div>
+            </article>
+          </section>
 
           <section class="workspace data-space">
             <div class="panel">
@@ -190,8 +227,6 @@
                 <button type="button">👍</button>
                 <button type="button">🙏</button>
                 <button type="button">✅</button>
-                <button type="button">📞</button>
-                <button type="button">📎</button>
                 <button type="button">❤️</button>
               </div>
               <div class="attach-panel hidden" id="attachPanel">
@@ -202,18 +237,106 @@
               <div class="conversation-body" id="customerChatList">
                 <p class="empty-state">Selecione um cliente para iniciar o atendimento.</p>
               </div>
+              <div class="audio-capture-panel hidden" id="audioCapturePanel">
+                <div class="audio-meter"><span id="audioMeterBar"></span></div>
+                <strong class="audio-duration" id="audioDuration">0:00</strong>
+                <audio id="audioPreview" controls></audio>
+                <button class="ghost-btn" id="cancelAudioBtn" type="button">Cancelar</button>
+              </div>
               <form id="customerChatForm" class="conversation-composer">
                 <button class="composer-icon" id="emojiToggle" type="button">☺</button>
-                <button class="composer-icon" id="attachBtn" type="button">⌘</button>
+                <button class="composer-icon" id="attachBtn" type="button" title="Anexar arquivo">📎</button>
                 <input id="attachmentInput" class="hidden" type="file">
                 <label class="signature-toggle">Assinar <input type="checkbox" id="signatureToggle" checked></label>
-                <input id="customerChatContent" type="text" placeholder="Digite uma mensagem" required>
-                <button class="composer-icon" id="voiceBtn" type="button">♩</button>
+                <input id="customerChatContent" type="text" placeholder="Digite uma mensagem">
+                <button class="composer-icon" id="voiceBtn" type="button" title="Gravar áudio">🎙</button>
                 <button class="composer-icon" id="timerBtn" type="button">◔</button>
                 <button class="composer-icon send-now" id="sendMessageBtn" type="submit">➤</button>
                 <p class="form-message" id="customerChatMessage"></p>
               </form>
               <select id="customerChatContact" class="hidden" required></select>
+            </section>
+          </section>
+        </div>
+
+        <div class="app-view" data-view-panel="team">
+          <section class="team-chat-shell">
+            <aside class="team-chat-list">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Equipe</p>
+                  <h2>Colaboradores</h2>
+                </div>
+              </div>
+              <div class="internal-team-tools">
+                <input id="internalTeamSearch" type="search" placeholder="Buscar colaborador">
+              </div>
+              <div class="team-list" id="internalTeamList">
+                <p class="empty-state">Nenhum colaborador carregado.</p>
+              </div>
+              <select id="internalChatRecipient" class="hidden"></select>
+            </aside>
+
+            <section class="internal-conversation">
+              <header class="internal-conversation-header">
+                <button class="chat-icon-btn back" id="internalBackBtn" type="button">‹</button>
+                <button class="chat-icon-btn info" id="internalInfoBtn" type="button">i</button>
+                <div>
+                  <p class="eyebrow">Chat interno</p>
+                  <h2 id="internalChatTitle">Selecione um colaborador</h2>
+                </div>
+                <div class="conversation-actions">
+                  <button class="chat-icon-btn audio" id="internalCallBtn" type="button">◐</button>
+                  <button class="chat-action return" id="internalReturnBtn" type="button">↻ Retornar</button>
+                  <button class="chat-action pause" id="internalPauseBtn" type="button">Ⅱ Pausar</button>
+                  <button class="chat-action finish" id="internalFinishBtn" type="button">✓✓ Finalizar</button>
+                  <button class="chat-action transfer" id="internalTransferBtn" type="button">↔ Transferir</button>
+                  <button class="chat-action delete" id="internalDeleteBtn" type="button">▣ Excluir</button>
+                  <button class="chat-icon-btn search" id="internalSearchBtn" type="button">⌕</button>
+                  <button class="chat-icon-btn menu" id="internalMenuBtn" type="button">⋮</button>
+                  <div class="chat-dropdown hidden" id="internalMenu">
+                    <button class="dropdown-item" id="internalCopyContactBtn" type="button">Copiar contato</button>
+                    <button class="dropdown-item" id="internalMarkUnreadBtn" type="button">Marcar como não lido</button>
+                    <button class="dropdown-item danger" id="internalClearChatBtn" type="button">Limpar conversa local</button>
+                  </div>
+                </div>
+              </header>
+              <div class="conversation-tags">Selecione as tags... <span>⌄</span></div>
+              <div class="emoji-panel hidden" id="internalEmojiPanel">
+                <button type="button">😀</button>
+                <button type="button">😁</button>
+                <button type="button">👍</button>
+                <button type="button">🙏</button>
+                <button type="button">✅</button>
+                <button type="button">📞</button>
+                <button type="button">📎</button>
+                <button type="button">❤️</button>
+              </div>
+              <div class="attach-panel hidden" id="internalAttachPanel">
+                <button type="button" data-attach-kind="image">Imagem</button>
+                <button type="button" data-attach-kind="document">Documento</button>
+                <button type="button" data-attach-kind="video">Video</button>
+              </div>
+              <div class="internal-chat-list" id="internalChatList">
+                <p class="empty-state">Selecione um colaborador para carregar a conversa.</p>
+              </div>
+              <div class="audio-capture-panel hidden" id="internalAudioCapturePanel">
+                <div class="audio-meter"><span id="internalAudioMeterBar"></span></div>
+                <strong class="audio-duration" id="internalAudioDuration">0:00</strong>
+                <audio id="internalAudioPreview" controls></audio>
+                <button class="ghost-btn" id="internalCancelAudioBtn" type="button">Cancelar</button>
+              </div>
+              <form id="internalChatForm" class="internal-chat-form">
+                <button class="composer-icon" id="internalEmojiToggle" type="button">☺</button>
+                <button class="composer-icon" id="internalAttachBtn" type="button" title="Anexar arquivo">📎</button>
+                <input id="internalAttachmentInput" class="hidden" type="file">
+                <label class="signature-toggle">Assinar <input type="checkbox" id="internalSignatureToggle" checked></label>
+                <input id="internalChatContent" type="text" placeholder="Mensagem interna">
+                <button class="composer-icon" id="internalVoiceBtn" type="button" title="Gravar áudio">🎙</button>
+                <button class="composer-icon" id="internalTimerBtn" type="button">◔</button>
+                <button class="primary-btn" type="submit">Enviar</button>
+                <p class="form-message" id="internalChatMessage"></p>
+              </form>
             </section>
           </section>
         </div>
@@ -229,7 +352,9 @@
                 <label>Perfil <select id="newUserRole"><option value="collaborator">Colaborador</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></label>
                 <label>Telefone <input id="newUserPhone" type="tel"></label>
                 <label>Ramal <input id="newUserExtension" type="text"></label>
+                <label>Departamento <input id="newUserDepartment" type="text" placeholder="Vendas, Suporte, Financeiro"></label>
                 <label>Telefone raiz <input id="newUserRootPhone" type="tel"></label>
+                <label class="wide checkbox-line">Também será admin <input id="newUserIsAdmin" type="checkbox"></label>
                 <button class="primary-btn" type="submit">Adicionar</button>
                 <p class="form-message" id="userMessage"></p>
               </form>
@@ -240,7 +365,7 @@
       </section>
     </main>
   </div>
-
+  <script src="http://127.0.0.1:3000/socket.io/socket.io.js"></script>
   <script src="./app.js"></script>
-</body>
+  </body>
 </html>
