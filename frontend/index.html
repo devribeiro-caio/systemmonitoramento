@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Formis Monitoramento</title>
+  <title>FormisPlataform</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -59,7 +59,7 @@
             <strong id="userName">Visitante</strong>
             <small id="userRole">Não autenticado</small>
           </div>
-          <button class="icon-btn hidden" id="logoutBtn" type="button" title="Sair">×</button>
+          <button class="icon-btn hidden" id="logoutBtn" type="button" title="Sair">✕</button>
         </div>
       </header>
 
@@ -129,7 +129,14 @@
             <div class="panel">
               <div class="panel-header">
                 <div><p class="eyebrow">Integração</p><h2>Evolution API</h2></div>
-                <button class="primary-btn" id="syncEvolutionBtn" type="button">Sincronizar</button>
+                <div class="panel-actions">
+                  <button class="ghost-btn" id="connectEvolutionBtn" type="button">Conectar QR</button>
+                  <button class="primary-btn" id="syncEvolutionBtn" type="button">Sincronizar</button>
+                </div>
+              </div>
+              <div class="evolution-qr hidden" id="evolutionQrPanel">
+                <img id="evolutionQrImage" alt="QR Code WhatsApp">
+                <small>Escaneie pelo WhatsApp para conectar a instancia.</small>
               </div>
               <div class="team-list" id="messageList"><p class="empty-state">Nenhuma mensagem carregada.</p></div>
               <p class="form-message" id="syncMessage"></p>
@@ -366,6 +373,8 @@
     </main>
   </div>
   <script src="http://127.0.0.1:3000/socket.io/socket.io.js"></script>
+  <script src="./js/app-utils.js"></script>
+  <script src="./js/ticket-utils.js"></script>
   <script src="./app.js"></script>
   </body>
 </html>

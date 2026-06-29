@@ -54,22 +54,10 @@ const channelLabels = {
 };
 
 const $ = (selector) => document.querySelector(selector);
-const {
-  blobToDataUrl,
-  deliveryTicks,
-  digitsOnly,
-  formatDuration,
-  groupCount,
-  initials,
-  messageContentHtml,
-  messageStatusLabel,
-  sameDay
-} = window.AppUtils;
-const {
-  getContactLastMessage,
-  getVisibleTicketContacts,
-  isCustomerChatContact
-} = window.TicketUtils;
+
+function digitsOnly(value) {
+  return String(value || '').replace(/\D/g, '');
+}
 
 function notifySound() {
   try {
@@ -111,6 +99,38 @@ function notifyBrowser(message) {
     tag: message._id || `${message.phone}-${message.occurredAt}`,
     silent: true
   });
+}
+
+function deliveryTicks(status) {
+  if (status === 'failed') return '<span class="delivery-ticks pending">✓</span>';
+  if (['sent', 'received', 'answered', 'registered'].includes(status)) {
+    return '<span class="delivery-ticks delivered">✓✓</span>';
+  }
+  return '<span class="delivery-ticks pending">✓</span>';
+}
+
+function messageStatusLabel(message) {
+  if (message.status === 'sending') return 'enviando';
+
+  if (message.status === 'failed') {
+    const error = message.metadata?.delivery?.error;
+    return error ? `nao enviado: ${error}` : 'nao enviado';
+  }
+
+  return message.status;
+}
+
+function messageContentHtml(message) {
+  const audio = message.metadata?.audio;
+  if (audio?.data) {
+    const duration = audio.durationSeconds ? ` ${formatDuration(audio.durationSeconds)}` : '';
+    return `
+      <span class="audio-message-label">Audio${duration}</span>
+      <audio class="message-audio" controls src="${audio.data}"></audio>
+    `;
+  }
+
+  return `<span>${message.content || 'sem conteudo'}</span>`;
 }
 
 function setCustomerChatMessage(text) {
@@ -163,6 +183,15 @@ function setInternalChatMessage(text) {
 function closeInternalPanels(exceptId = '') {
   ['internalEmojiPanel', 'internalAttachPanel', 'internalMenu'].forEach((id) => {
     if (id !== exceptId) $(`#${id}`)?.classList.add('hidden');
+  });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
   });
 }
 
@@ -235,6 +264,13 @@ function stopAudioMeter() {
   activeAudioContext?.close?.().catch(() => {});
   activeAudioContext = null;
   activeAudioAnalyser = null;
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, Math.round(seconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const rest = String(safeSeconds % 60).padStart(2, '0');
+  return `${minutes}:${rest}`;
 }
 
 async function toggleAudioRecording(button, setMessage, target = 'customer') {
@@ -460,10 +496,19 @@ async function request(path, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.message || data.error || 'Não foi possível comunicar com a API.');
+    throw new Error(data.message || 'Não foi possível comunicar com a API.');
   }
 
   return data;
+}
+
+function initials(name) {
+  return String(name || 'Formis Monitoramento')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join('');
 }
 
 function updateUserUI() {
@@ -501,6 +546,20 @@ function renderMetrics() {
   $('#metricResolved').textContent = resolved;
   $('#metricRoot').textContent = state.user?.rootPhone || '--';
   renderAttendanceAnalytics();
+}
+
+function sameDay(dateA, dateB) {
+  return dateA.getFullYear() === dateB.getFullYear()
+    && dateA.getMonth() === dateB.getMonth()
+    && dateA.getDate() === dateB.getDate();
+}
+
+function groupCount(items, getKey) {
+  return items.reduce((acc, item) => {
+    const key = getKey(item) || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 }
 
 function renderBarList(elementId, rows, total, labelMap = {}) {
@@ -651,32 +710,36 @@ function renderContacts() {
 
   // FIX: Guardar hash para evitar re-renderização agressiva que causa refresh visual
   const contactsHash = state.contacts.map((c) => `${c._id}-${c.status}-${c.lastInteractionAt}`).join('|');
-  if (list.dataset.lastHash !== contactsHash) {
-    list.dataset.lastHash = contactsHash;
+  if (list.dataset.lastHash === contactsHash) return;
+  list.dataset.lastHash = contactsHash;
 
-    if (!state.contacts.length) {
-      list.innerHTML = '<p class="empty-state">Nenhum contato real encontrado ainda.</p>';
-    } else {
-      list.innerHTML = state.contacts.map((contact) => `
-        <article class="team-member">
-          <div>
-            <strong>${contact.name || 'Contato sem nome'}</strong>
-            <small>${contact.phone} - ${contact.source}</small>
-          </div>
-          <span class="list-meta">${new Date(contact.lastInteractionAt).toLocaleString('pt-BR')}</span>
-        </article>
-      `).join('');
-    }
+  if (!state.contacts.length) {
+    list.innerHTML = '<p class="empty-state">Nenhum contato real encontrado ainda.</p>';
+    return;
+  }
 
-    const chatList = $('#chatContactList');
-    if (chatList) {
-      chatList.innerHTML = list.innerHTML;
-    }
+  list.innerHTML = state.contacts.map((contact) => `
+    <article class="team-member">
+      <div>
+        <strong>${contact.name || 'Contato sem nome'}</strong>
+        <small>${contact.phone} - ${contact.source}</small>
+      </div>
+      <span class="list-meta">${new Date(contact.lastInteractionAt).toLocaleString('pt-BR')}</span>
+    </article>
+  `).join('');
+
+  const chatList = $('#chatContactList');
+  if (chatList) {
+    chatList.innerHTML = list.innerHTML;
   }
 
   const customerSelect = $('#customerChatContact');
   if (customerSelect) {
-    const chatContacts = state.contacts.filter(isCustomerChatContact);
+    const chatContacts = state.contacts.filter((contact) => {
+      if (contact.source === 'wide_voice') return false;
+      if (contact.remoteJid && !contact.remoteJid.endsWith('@s.whatsapp.net')) return false;
+      return contact.phone && contact.phone !== '0';
+    });
     const selectedBeforeRender = state.selectedContactId || customerSelect.value;
     
     // FIX: Só atualizar o select se as opções mudarem para não perder o foco/estado
@@ -696,16 +759,22 @@ function renderContacts() {
 
   const ticketList = $('#customerTicketList');
   if (ticketList) {
-    const visibleContacts = getVisibleTicketContacts(
-      state.contacts,
-      state.ticketFilter,
-      state.ticketSearch,
-      state.messages
-    );
+    const chatContacts = state.contacts.filter((contact) => {
+      if (contact.source === 'wide_voice') return false;
+      if (contact.remoteJid && !contact.remoteJid.endsWith('@s.whatsapp.net')) return false;
+      return contact.phone && contact.phone !== '0';
+    });
+    const filteredContacts = state.ticketFilter === 'all'
+      ? chatContacts
+      : chatContacts.filter((contact) => (contact.status || 'open') === state.ticketFilter);
+    const visibleContacts = state.ticketSearch
+      ? filteredContacts.filter((contact) => `${contact.name || ''} ${contact.phone || ''}`.toLowerCase().includes(state.ticketSearch.toLowerCase()))
+      : filteredContacts;
 
     ticketList.innerHTML = visibleContacts.length
       ? visibleContacts.map((contact, index) => {
-          const lastMessage = getContactLastMessage(state.messages, contact);
+          const contactPhone = digitsOnly(contact.phone);
+          const lastMessage = state.messages.find((message) => digitsOnly(message.phone) === contactPhone);
           const avatar = contact.profilePictureUrl
             ? `<img class="ticket-avatar-img" src="${contact.profilePictureUrl}" alt="${contact.name || contact.phone}">`
             : `<span class="ticket-avatar">${initials(contact.name || contact.phone)}</span>`;
@@ -727,12 +796,17 @@ function renderContacts() {
     });
   }
 
-  const firstVisible = getVisibleTicketContacts(
-    state.contacts,
-    state.ticketFilter,
-    state.ticketSearch,
-    state.messages
-  )[0];
+  const chatContacts = state.contacts.filter((contact) => {
+    if (contact.source === 'wide_voice') return false;
+    if (contact.remoteJid && !contact.remoteJid.endsWith('@s.whatsapp.net')) return false;
+    return contact.phone && contact.phone !== '0';
+  });
+  const filteredContacts = state.ticketFilter === 'all'
+    ? chatContacts
+    : chatContacts.filter((contact) => (contact.status || 'open') === state.ticketFilter);
+  const firstVisible = state.ticketSearch
+    ? filteredContacts.find((contact) => `${contact.name || ''} ${contact.phone || ''}`.toLowerCase().includes(state.ticketSearch.toLowerCase()))
+    : filteredContacts[0];
 
   if (firstVisible && customerSelect && !state.selectedContactId && !customerSelect.value) {
     selectCustomerTicket(firstVisible._id);
@@ -777,45 +851,6 @@ function renderMessages() {
   renderCustomerChat();
 }
 
-function getCustomerMessageKey(message) {
-  return message._clientId || message._id;
-}
-
-function customerMessageBubbleHtml(message, contact) {
-  const messageKey = getCustomerMessageKey(message);
-  return `
-    <article class="message-bubble ${message.direction === 'outgoing' ? 'outgoing' : 'incoming'} ${message.status === 'failed' ? 'failed' : ''}" data-message="${message._id}" data-message-key="${messageKey}">
-      <button class="delete-message-btn" type="button" title="Apagar mensagem">A</button>
-      <strong>${message.direction === 'outgoing' ? state.user.name : contact?.name || message.phone}</strong>
-      ${messageContentHtml(message)}
-      <small>${new Date(message.occurredAt || message.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ${message.direction === 'outgoing' ? deliveryTicks(message.status) : ''}</small>
-      ${message.status === 'failed' ? `<em class="message-error">${messageStatusLabel(message)}</em>` : ''}
-    </article>
-  `;
-}
-
-function syncCustomerMessageBubble(element, message) {
-  element.dataset.message = message._id;
-  element.classList.toggle('failed', message.status === 'failed');
-
-  const statusLine = element.querySelector('small');
-  if (statusLine) {
-    const nextStatusLine = `${new Date(message.occurredAt || message.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ${message.direction === 'outgoing' ? deliveryTicks(message.status) : ''}`;
-    if (statusLine.innerHTML !== nextStatusLine) statusLine.innerHTML = nextStatusLine;
-  }
-
-  const currentError = element.querySelector('.message-error');
-  const nextError = message.status === 'failed' ? messageStatusLabel(message) : '';
-
-  if (nextError && currentError) {
-    currentError.textContent = nextError;
-  } else if (nextError) {
-    element.insertAdjacentHTML('beforeend', `<em class="message-error">${nextError}</em>`);
-  } else if (currentError) {
-    currentError.remove();
-  }
-}
-
 function renderCustomerChat() {
   const list = $('#customerChatList');
   const select = $('#customerChatContact');
@@ -839,26 +874,21 @@ function renderCustomerChat() {
     : [];
 
   // FIX: evitar re-renderização total se o conteúdo for idêntico (previne o "salto" na tela)
-  const contentHash = messages.map((m) => `${getCustomerMessageKey(m)}-${m.status}`).join('|');
-  const isSameContact = list.dataset.lastContact === select.value;
-  
-  if (list.dataset.lastContent === contentHash && isSameContact) {
+  const contentHash = messages.map((m) => `${m._id}-${m.status}`).join('|');
+  if (list.dataset.lastContent === contentHash && list.dataset.lastContact === select.value) {
     return;
   }
-  
   list.dataset.lastContent = contentHash;
   list.dataset.lastContact = select.value;
 
   $('#conversationName').textContent = contact?.name || selected?.textContent || 'Selecione um cliente';
   $('#conversationMeta').textContent = contact ? `${contact.phone} - Atendimento WhatsApp` : 'Atendimento WhatsApp';
   updateTicketButtons();
-  
   const avatar = $('#conversationInitials');
   if (avatar) {
-    const avatarHtml = contact?.profilePictureUrl
+    avatar.innerHTML = contact?.profilePictureUrl
       ? `<img class="conversation-avatar-img" src="${contact.profilePictureUrl}" alt="${contact.name || contact.phone}">`
       : initials(contact?.name || contact?.phone || '--');
-    if (avatar.innerHTML !== avatarHtml) avatar.innerHTML = avatarHtml;
   }
 
   if (!messages.length) {
@@ -866,69 +896,20 @@ function renderCustomerChat() {
     return;
   }
 
-  // Renderização incremental: se for o mesmo contato, tentar apenas adicionar novas mensagens
-  const existingMessages = list.querySelectorAll('article[data-message-key]');
-  if (isSameContact && existingMessages.length > 0 && messages.length >= existingMessages.length) {
-    const existingKeys = Array.from(existingMessages).map((item) => item.dataset.messageKey);
-    const messageKeys = messages.map(getCustomerMessageKey);
-
-    if (existingKeys.length === messageKeys.length && existingKeys.every((key, index) => key === messageKeys[index])) {
-      existingMessages.forEach((element, index) => {
-        syncCustomerMessageBubble(element, messages[index]);
-      });
-
-      list.querySelectorAll('.delete-message-btn').forEach((button) => {
-        if (!button.dataset.bound) {
-          button.dataset.bound = 'true';
-          button.addEventListener('click', async () => {
-            const id = button.closest('.message-bubble')?.dataset.message;
-            if (!id || id.startsWith('temp-')) return;
-            await request(`/api/messages/${id}`, { method: 'DELETE', headers: authHeaders() });
-            await loadMessages();
-          });
-        }
-      });
-      return;
-    }
-
-    const lastExistingKey = existingKeys[existingKeys.length - 1];
-    const lastMessageIndex = messages.findIndex(m => getCustomerMessageKey(m) === lastExistingKey);
-    
-    if (lastMessageIndex !== -1 && lastMessageIndex < messages.length - 1) {
-      const newMessages = messages.slice(lastMessageIndex + 1);
-      const newHtml = newMessages.map((message) => customerMessageBubbleHtml(message, contact)).join('');
-      
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = newHtml;
-      while (tempDiv.firstChild) {
-        list.appendChild(tempDiv.firstChild);
-      }
-      
-      // Re-vincular apenas os novos botões de deletar
-      list.querySelectorAll('.delete-message-btn').forEach((button) => {
-        if (!button.dataset.bound) {
-          button.dataset.bound = 'true';
-          button.addEventListener('click', async () => {
-            const id = button.closest('.message-bubble')?.dataset.message;
-            if (!id || id.startsWith('temp-')) return;
-            await request(`/api/messages/${id}`, { method: 'DELETE', headers: authHeaders() });
-            await loadMessages();
-          });
-        }
-      });
-      
-      requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
-      return;
-    }
-  }
-
-  // Fallback para renderização total se for troca de contato ou mudança complexa
-  list.innerHTML = messages.map((message) => customerMessageBubbleHtml(message, contact)).join('');
+  list.innerHTML = messages.map((message) => `
+    <article class="message-bubble ${message.direction === 'outgoing' ? 'outgoing' : 'incoming'} ${message.status === 'failed' ? 'failed' : ''}" data-message="${message._id}">
+      <button class="delete-message-btn" type="button" title="Apagar mensagem">A</button>
+      <strong>${message.direction === 'outgoing' ? state.user.name : contact?.name || message.phone}</strong>
+      ${messageContentHtml(message)}
+      <small>${new Date(message.occurredAt || message.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ${message.direction === 'outgoing' ? deliveryTicks(message.status) : ''}</small>
+      ${message.status === 'failed' ? `<em class="message-error">${messageStatusLabel(message)}</em>` : ''}
+    </article>
+  `).join('');
 
   list.querySelectorAll('.delete-message-btn').forEach((button) => {
     button.addEventListener('click', async () => {
       const id = button.closest('.message-bubble')?.dataset.message;
-      if (!id || id.startsWith('temp-')) return;
+      if (!id) return;
 
       await request(`/api/messages/${id}`, {
         method: 'DELETE',
@@ -1214,21 +1195,14 @@ async function loadMessages() {
 
   const data = await request('/api/messages', { headers: authHeaders() });
   const newMessages = data.messages || [];
-  const localMessages = state.messages.filter((message) => (
-    message.metadata?.optimistic || message.status === 'failed'
-  ));
-  const mergedMessages = [
-    ...localMessages.filter((local) => !newMessages.some((message) => getCustomerMessageKey(message) === getCustomerMessageKey(local))),
-    ...newMessages
-  ];
   
   // FIX: evitar renderização se as mensagens não mudaram
-  const messagesHash = mergedMessages.map((m) => `${getCustomerMessageKey(m)}-${m.status}`).join('|');
+  const messagesHash = newMessages.map((m) => `${m._id}-${m.status}`).join('|');
   if (state.lastMessagesHash === messagesHash) return;
   state.lastMessagesHash = messagesHash;
 
   const previousCount = state.knownIncomingMessageIds.size;
-  state.messages = mergedMessages;
+  state.messages = newMessages;
   const newIncomingMessages = [];
   state.messages
     .filter((message) => message.direction === 'incoming')
@@ -1686,14 +1660,7 @@ function bindEvents() {
   $('#customerChatContact')?.addEventListener('change', (event) => selectCustomerTicket(event.target.value));
 
   $('#customerChatContent')?.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || event.shiftKey) return;
-    
-    // Se não houver conteúdo nem áudio, não faz nada mas previne o reload
-    const content = event.target.value.trim();
-    if (!content && !pendingAudio.customer) {
-      event.preventDefault();
-      return;
-    }
+    if (event.key !== 'Enter' || event.shiftKey || !pendingAudio.customer) return;
 
     event.preventDefault();
     $('#customerChatForm')?.requestSubmit();
@@ -1915,7 +1882,7 @@ function bindEvents() {
     
     // FIX: parar polling temporariamente para evitar conflitos de renderização durante o envio
     stopLivePolling();
-    renderCustomerChat();
+    renderMessages();
 
     try {
       const result = await request('/api/messages', {
@@ -1937,30 +1904,18 @@ function bindEvents() {
         })
       });
 
-      result.message._clientId = tempId;
       state.messages = state.messages.map((message) => (
         message._id === tempId ? result.message : message
       ));
       setTicketActionMessage(audio ? 'Audio enviado.' : 'Mensagem enviada.');
       clearAudio('customer');
-      renderCustomerChat();
+      renderMessages();
     } catch (error) {
-      state.messages = state.messages.map((message) => (
-        message._id === tempId
-          ? {
-              ...message,
-              status: 'failed',
-              metadata: {
-                ...message.metadata,
-                error: error.message || 'Falha ao enviar'
-              }
-            }
-          : message
-      ));
+      state.messages = state.messages.filter((message) => message._id !== tempId);
       $('#customerChatContent').value = content;
       setTicketActionMessage(error.message || 'Não foi possível enviar o audio.');
       if (audio) setAudioPanel('customer', audio);
-      renderCustomerChat();
+      renderMessages();
     } finally {
       // FIX: retomar polling após conclusão do envio
       startLivePolling();
@@ -2026,3 +1981,7 @@ if (state.token && state.user) {
   });
   startLivePolling();
 }
+
+
+
+
